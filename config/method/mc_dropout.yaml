@@ -1,0 +1,3 @@
+name: "mc_dropout"
+sample_size: 100  # Number of MC samples for uncertainty estimation
+threshold: 0.01  # Threshold for OOD detection

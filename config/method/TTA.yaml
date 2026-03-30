@@ -1,0 +1,18 @@
+name: "TTA"
+sample_size: 1000  # Number of MC samples for uncertainty estimation
+augmentation:
+  _type: Compose
+  transforms:
+    - _type: RandomChoice
+      transforms:
+        - _type: RandomAffine
+          degrees: 0
+          scale: [0.95, 1.05]
+        - _type: RandomRotation
+          degrees: [-10, 10]
+#        - _type: RandomHorizontalFlip
+#        - _type: RandomVerticalFlip
+    - _type: GaussianNoise
+      mean: 0
+      sigma: 0.1
+      clip: True

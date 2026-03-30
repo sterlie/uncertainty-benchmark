@@ -1,0 +1,7 @@
+name: "repulsive_ensemble"
+num_particles: 3
+prior_variance: 10.0
+pred_dist_std: 1.0
+gamma: 1.0
+annealing_steps: 0
+threshold: 0.55

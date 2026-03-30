@@ -1,0 +1,7 @@
+name: epistemic_trend 
+
+# training
+epochs: 3
+lr: 0.001
+weight_decay: 0.0
+normalize: True

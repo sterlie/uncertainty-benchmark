@@ -1,0 +1,10 @@
+name: nih
+batch_size: 16
+num_classes: 14
+channels: 3
+image_size: 224
+num_workers: 4
+pin_memory: true
+train_subset: null
+test_subset: null
+data_root: ${data.root}/nih

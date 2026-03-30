@@ -1,0 +1,8 @@
+name: "het_xl"
+sample_size: 100
+matrix_rank: 16
+output_features: 512
+temperature: 1.0
+use_het: False
+ood_threshold: 0.0
+misclassify_threshold: 0.0

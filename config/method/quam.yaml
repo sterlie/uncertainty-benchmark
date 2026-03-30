@@ -1,0 +1,5 @@
+name: "quam"
+threshold: 0.4
+epochs: 4
+gradient_clipping_value: -1.0
+gradient_clipping_norm: -1.0

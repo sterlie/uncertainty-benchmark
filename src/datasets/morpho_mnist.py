@@ -3,10 +3,14 @@ import torch
 from torch.utils.data import Dataset
 import struct
 import numpy as np
-import sys, os
 from multipledispatch import dispatch
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Morpho-MNIST')))
-from morphomnist import morpho, perturb
+try:
+    from morphomnist import morpho, perturb
+except ImportError as exc:
+    raise ImportError(
+        "morphomnist is required for MorphoMNISTDataset. "
+        "Install it before using this dataset."
+    ) from exc
 from torchvision import transforms
 
 

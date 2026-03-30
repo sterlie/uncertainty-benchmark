@@ -1,0 +1,3 @@
+name: "ensemble"
+sample_size: 5
+threshold: 0.2

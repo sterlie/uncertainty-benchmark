@@ -1,5 +1,5 @@
 from sklearn.metrics import confusion_matrix
-from utils.metrics import *
+from src.utils.metrics import *
 
 def evaluate(true_labels, predicted_labels):
     ## confusion matrix

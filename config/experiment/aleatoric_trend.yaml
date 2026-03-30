@@ -1,0 +1,22 @@
+name: aleatoric_trend
+
+# training
+epochs: 3
+lr: 0.001
+weight_decay: 0.0
+normalize: True
+
+# increasing blur severity used to induce aleatoric uncertainty trend
+severity_levels:
+  - name: plain
+    kernel: 3
+    sigma: .5
+  - name: low_severity
+    kernel: 5
+    sigma: 1.0
+  - name: mid_severity
+    kernel: 11
+    sigma: 2.0
+  - name: high_severity
+    kernel: 17
+    sigma: 3.0

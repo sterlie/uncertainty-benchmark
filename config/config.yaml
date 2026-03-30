@@ -1,0 +1,25 @@
+defaults:
+  - dataset: mnist
+  - model: mlp
+  - method: mc_dropout
+  - optimizer: sgd
+  - experiment: mnist_baseline
+  - task: benchmark
+  - _self_
+
+seed: 11111
+weighted: False
+
+setup_only: false
+methods_to_run: []
+
+data:
+  root: ${hydra:runtime.cwd}/data
+
+output:
+  save_model: true
+  save_metrics: true
+
+hydra:
+  run:
+    dir: ${hydra:runtime.cwd}/results/${now:%Y-%m-%d}/${experiment.name}/${now:%H-%M-%S}
