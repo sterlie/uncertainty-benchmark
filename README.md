@@ -37,20 +37,15 @@ pip install -r requirements.txt
 
 ## 2) One-line commands
 
-### Unified core CLI (primary interface)
+### Experiment CLI (primary interface)
 ```bash
-python -m src.experiments.run_benchmark dataset=mnist method=mc_dropout model=mlp experiment=aleatoric_trend task=benchmark
-```
-
-### Train-only and eval-only entrypoints
-```bash
-python -m src.experiments.run_train dataset=mnist method=mc_dropout model=mlp experiment=aleatoric_trend task=train
-python -m src.experiments.run_eval dataset=mnist method=mc_dropout model=mlp experiment=aleatoric_trend task=eval
+python -m src.experiments.aleatoric_trend dataset=mnist method=mc_dropout model=mlp
+python -m src.experiments.epistemic_trend dataset=mnist method=mc_dropout model=mlp
 ```
 
 ### Quick smoke test
 ```bash
-python -m src.experiments.run_benchmark dataset=mnist experiment=aleatoric_trend  dataset.train_subset=500 dataset.test_subset=100 experiment.epochs=1
+python -m src.experiments.aleatoric_trend dataset=mnist dataset.train_subset=500 dataset.test_subset=100 experiment.epochs=1
 ```
 
 ## 3) Makefile shortcuts
@@ -60,8 +55,6 @@ make setup-mnist
 make run-mnist
 make run-mnist-quick
 make run-benchmark
-make run-train
-make run-eval
 ```
 
 All Makefile shortcuts now resolve to `src.experiments.*` entrypoints.
@@ -71,12 +64,11 @@ All Makefile shortcuts now resolve to `src.experiments.*` entrypoints.
 - `config/config.yaml`
 - `config/dataset/` (`mnist`, `chexpert`, `nih`, `vin`, `isic`)
 - `config/experiment/` (`mnist_baseline`, `aleatoric_trend`)
-- `config/task/` (`benchmark`, `train`, `eval`)
 
 Override any setting from CLI, for example:
 
 ```bash
-python -m src.experiments.run_benchmark dataset=nih seed=123 experiment.epochs=10 dataset.batch_size=8
+python -m src.experiments.aleatoric_trend dataset=nih seed=123 experiment.epochs=10 dataset.batch_size=8
 ```
 
 ## 5) Reproducibility

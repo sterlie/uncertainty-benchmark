@@ -106,6 +106,159 @@ def _build_blur_loaders(
     return clean_train_loader, clean_val_loader, eval_loaders, level_names
 
 
+def _build_fracture_loaders(
+    root: str,
+    batch_size: int,
+    normalize: bool,
+    severity_levels,
+    train_subset_size,
+    test_subset_size,
+) -> Tuple[DataLoader, DataLoader, Dict[str, DataLoader], List[str]]:
+    """Build clean MNIST train/val loaders and fracture-distorted eval loaders."""
+    try:
+        from src.datasets import morpho_mnist as morpho_mnist_module
+    except ImportError as exc:
+        raise ImportError(
+            "morphomnist is required for fracture-based epistemic trend experiments."
+        ) from exc
+
+    MorphoMNISTDataset = morpho_mnist_module.MorphoMNISTDataset
+    perturb = morpho_mnist_module.perturb
+
+    train_plain, val_plain = _build_plain_datasets(
+        root=root,
+        normalize=normalize,
+        train_subset_size=train_subset_size,
+        test_subset_size=test_subset_size,
+    )
+
+    clean_train_loader = DataLoader(
+        train_plain,
+        batch_size=batch_size,
+        shuffle=True,
+    )
+    clean_val_loader = DataLoader(
+        val_plain,
+        batch_size=batch_size,
+        shuffle=False,
+    )
+
+    raw_val = datasets.MNIST(root=root, train=False, download=True)
+    val_images = raw_val.data.numpy()
+    val_labels = raw_val.targets.numpy()
+    if test_subset_size is not None:
+        subset_size = min(int(test_subset_size), len(val_images))
+        val_images = val_images[:subset_size]
+        val_labels = val_labels[:subset_size]
+
+    eval_loaders: Dict[str, DataLoader] = {}
+    level_names: List[str] = []
+    base_transform = _mnist_transform(normalize)
+
+    for level in range(1, int(severity_levels) + 1):
+        if isinstance(level, (int, float)):
+            fracture_count = int(level)
+            level_name = str(fracture_count)
+        else:
+            fracture_count = int(level.get("fractures", 0))
+            level_name = str(level.get("name", fracture_count))
+        level_names.append(level_name)
+
+        if fracture_count <= 0:
+            eval_dataset = MorphoMNISTDataset(
+                val_images,
+                val_labels,
+                perturbation=None,
+                transform=base_transform,
+            )
+        else:
+            eval_dataset = MorphoMNISTDataset(
+                val_images,
+                val_labels,
+                perturbation=perturb.Fracture(num_frac=fracture_count),
+                transform=base_transform,
+            )
+
+        eval_loaders[level_name] = DataLoader(
+            eval_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+        )
+
+    return clean_train_loader, clean_val_loader, eval_loaders, level_names
+
+
+def _build_thinning_loaders(
+    root: str,
+    batch_size: int,
+    normalize: bool,
+    severity_levels,
+    train_subset_size,
+    test_subset_size,
+) -> Tuple[DataLoader, DataLoader, Dict[str, DataLoader], List[str]]:
+    """Build clean MNIST train/val loaders and thinning-distorted eval loaders."""
+    try:
+        from src.datasets import morpho_mnist as morpho_mnist_module
+    except ImportError as exc:
+        raise ImportError(
+            "morphomnist is required for thinning-based epistemic trend experiments."
+        ) from exc
+
+    MorphoMNISTDataset = morpho_mnist_module.MorphoMNISTDataset
+    perturb = morpho_mnist_module.perturb
+
+    train_plain, val_plain = _build_plain_datasets(
+        root=root,
+        normalize=normalize,
+        train_subset_size=train_subset_size,
+        test_subset_size=test_subset_size,
+    )
+
+    clean_train_loader = DataLoader(
+        train_plain, 
+        batch_size=batch_size, 
+        shuffle=True)
+    clean_val_loader = DataLoader(
+        val_plain, 
+        batch_size=batch_size, 
+        shuffle=False)
+
+    raw_val = datasets.MNIST(root=root, train=False, download=True)
+    val_images = raw_val.data.numpy()
+    val_labels = raw_val.targets.numpy()
+    if test_subset_size is not None:
+        subset_size = min(int(test_subset_size), len(val_images))
+        val_images = val_images[:subset_size]
+        val_labels = val_labels[:subset_size]
+
+    eval_loaders: Dict[str, DataLoader] = {}
+    level_names: List[str] = []
+    base_transform = _mnist_transform(normalize)
+
+    if isinstance(severity_levels, int):
+        raise ValueError('For thinning, specify distortion levels as a list, e.g. [0.1, 0.3, 0.5, 0.7, 0.9]')
+    amounts = [float(a) for a in severity_levels]
+
+    for amount in amounts:
+        level_name = str(amount)
+        level_names.append(level_name)
+
+        eval_dataset = MorphoMNISTDataset(
+            val_images,
+            val_labels,
+            perturbation=perturb.Thinning(amount=amount),
+            transform=base_transform,
+        )
+
+        eval_loaders[level_name] = DataLoader(
+            eval_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+        )
+
+    return clean_train_loader, clean_val_loader, eval_loaders, level_names
+
+
 def build_mnist_loaders(
     cfg: DictConfig, distortion_pattern: str = "blur"
 ) -> Tuple[DataLoader, DataLoader, Dict[str, DataLoader], List[str]]:
@@ -114,7 +267,7 @@ def build_mnist_loaders(
 
     Args:
         cfg: Hydra config with dataset, experiment, and data settings
-        distortion_pattern: Type of distortion ("blur" or "none")
+        distortion_pattern: Type of distortion ("blur" or "fracture")
 
     Returns:
         Tuple of (train_loaders, val_loaders, level_names)
@@ -128,6 +281,26 @@ def build_mnist_loaders(
     if distortion_pattern == "blur":
         severity_levels = cfg.experiment.severity_levels
         return _build_blur_loaders(
+            root=root,
+            batch_size=batch_size,
+            normalize=normalize,
+            severity_levels=severity_levels,
+            train_subset_size=train_subset,
+            test_subset_size=test_subset,
+        )
+    if distortion_pattern == "fracture":
+        severity_levels = cfg.experiment.severity_levels
+        return _build_fracture_loaders(
+            root=root,
+            batch_size=batch_size,
+            normalize=normalize,
+            severity_levels=severity_levels,
+            train_subset_size=train_subset,
+            test_subset_size=test_subset,
+        )
+    if distortion_pattern == "thinning":
+        severity_levels = cfg.experiment.severity_levels
+        return _build_thinning_loaders(
             root=root,
             batch_size=batch_size,
             normalize=normalize,

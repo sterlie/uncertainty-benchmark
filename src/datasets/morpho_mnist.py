@@ -1,16 +1,23 @@
 import gzip
+import sys
 import torch
 from torch.utils.data import Dataset
 import struct
 import numpy as np
+from pathlib import Path
 from multipledispatch import dispatch
 try:
     from morphomnist import morpho, perturb
 except ImportError as exc:
-    raise ImportError(
-        "morphomnist is required for MorphoMNISTDataset. "
-        "Install it before using this dataset."
-    ) from exc
+    vendor_root = Path(__file__).resolve().parents[2] / "Morpho-MNIST"
+    if vendor_root.exists():
+        sys.path.insert(0, str(vendor_root))
+        from morphomnist import morpho, perturb
+    else:
+        raise ImportError(
+            "morphomnist is required for MorphoMNISTDataset. "
+            "Install it before using this dataset."
+        ) from exc
 from torchvision import transforms
 
 

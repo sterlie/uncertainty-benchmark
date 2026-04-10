@@ -1,0 +1,11 @@
+name: unified_benchmark
+
+# Orchestrator experiment:
+# Runs both aleatoric (blur) and epistemic (fracture) pipelines,
+# then saves ID/OOD uncertainty artifacts and per-pattern OOD plots.
+
+# Defaults used by sub-experiments if shared fields are accessed.
+epochs: 3
+lr: 0.001
+weight_decay: 0.0
+normalize: true

@@ -1,0 +1,31 @@
+model:
+  name: cnn
+  in_channels: 1
+  num_classes: 10
+
+  conv_layers:
+    - out_channels: 32
+      kernel_size: 3
+      stride: 1
+      padding: 1
+      activation: relu
+      batch_norm: true
+      pooling:
+        type: max
+        kernel_size: 2
+        stride: 2
+
+    - out_channels: 16
+      kernel_size: 3
+      stride: 1
+      padding: 1
+      activation: relu
+      batch_norm: true
+      pooling:
+        type: max
+        kernel_size: 2
+        stride: 2
+
+  linear_layers:
+    - out_features: 10
+      in_features: 400

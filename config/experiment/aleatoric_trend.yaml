@@ -1,4 +1,5 @@
 name: aleatoric_trend
+distortion_pattern: blur
 
 # training
 epochs: 3

@@ -6,13 +6,16 @@ from pathlib import Path
 from typing import Dict, List
 
 import hydra
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
+from hydra.core.hydra_config import HydraConfig
+
 
 from src.methods.method_factory import MethodFactory
-from src.datasets.mnist import build_mnist_loaders
+from src.experiments.datasets import get_dataset_adapter
+from src.utils.visualization import trend, entropy
+
 
 
 def set_random_seed(seed: int) -> None:
@@ -25,69 +28,43 @@ def set_random_seed(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def plot_trend(uncertainties: Dict[str, Dict[str, np.ndarray]], ordered_levels: List[str], output_path: Path) -> None:
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    keys = ["total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty"]
-
-    for axis, key in zip(axes, keys):
-        means = []
-        for level in ordered_levels:
-            means.append(float(np.mean(uncertainties[level][key])))
-        axis.plot(ordered_levels, means, marker="o")
-        axis.set_title(key)
-        axis.set_xlabel("severity")
-        axis.set_ylabel("mean uncertainty")
-        axis.grid(alpha=0.3)
-
-    fig.tight_layout()
-    fig.savefig(output_path)
-    plt.close(fig)
-
-
-def _to_numpy(value):
-    if isinstance(value, torch.Tensor):
-        return value.detach().cpu().numpy()
-    return np.asarray(value)
-
-
-def _plot_uncertainty_view(uncertainty_dict: Dict[str, object]) -> Dict[str, np.ndarray]:
-    return {
-        "total_uncertainty": _to_numpy(uncertainty_dict["total_uncertainty"]),
-        "aleatoric_uncertainty": _to_numpy(uncertainty_dict["aleatoric_uncertainty"]),
-        "epistemic_uncertainty": _to_numpy(uncertainty_dict["epistemic_uncertainty"]),
-    }
-
-
 def _resolve_methods_to_run(cfg: DictConfig) -> List[str]:
     methods_cfg = cfg.get("methods_to_run", [])
+    available_methods = MethodFactory.get_available_methods()
+    all_methods_tokens = {"all_methods", "all"}
 
     if isinstance(methods_cfg, str):
-        methods = [m.strip() for m in methods_cfg.split(",") if m.strip()]
+        raw = methods_cfg.strip()
+        if raw.lower() in all_methods_tokens:
+            methods = list(available_methods)
+        else:
+            methods = [m.strip().lower() for m in raw.split(",") if m.strip()]
     else:
-        methods = [str(m) for m in methods_cfg]
+        methods = [str(m).strip().lower() for m in methods_cfg]
+
+    if any(m in all_methods_tokens for m in methods):
+        methods = list(available_methods)
 
     if not methods:
-        methods = [str(cfg.method.name)]
+        default_method = str(cfg.method.name).strip().lower()
+        if default_method in all_methods_tokens:
+            methods = list(available_methods)
+        else:
+            methods = [default_method]
 
     unique_methods: List[str] = []
     for method_name in methods:
         if method_name not in unique_methods:
             unique_methods.append(method_name)
 
-    available_methods = set(MethodFactory.get_available_methods())
-    unknown_methods = [m for m in unique_methods if m not in available_methods]
+    available_methods_set = set(available_methods)
+    unknown_methods = [m for m in unique_methods if m not in available_methods_set]
     if unknown_methods:
         raise ValueError(
-            f"Unknown method(s): {unknown_methods}. Available methods: {sorted(available_methods)}"
+            f"Unknown method(s): {unknown_methods}. Available methods: {sorted(available_methods_set)}"
         )
 
     return unique_methods
-
-
-def _method_cfg_copy(cfg: DictConfig, method_name: str) -> DictConfig:
-    cfg_copy = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
-    cfg_copy.method.name = method_name
-    return cfg_copy
 
 
 @hydra.main(config_path="../../config", config_name="config", version_base=None)
@@ -99,8 +76,16 @@ def main(cfg: DictConfig) -> None:
 
     os.makedirs(cfg.data.root, exist_ok=True)
 
-    # Build data loaders with blur distortions
-    base_train_loader, base_val_loader, eval_loaders, level_names = build_mnist_loaders(cfg, distortion_pattern="blur")
+    distortion_pattern = str(cfg.experiment.get("distortion_pattern", "blur"))
+    adapter = get_dataset_adapter(cfg)
+    base_train_loader, base_val_loader, eval_loaders, level_names = adapter.build_loaders(
+        cfg,
+        distortion_pattern=distortion_pattern,
+    )
+
+    dataset_name = str(cfg.dataset.name)
+    experiment_name = str(cfg.experiment.name)
+    run_id = str(cfg.output.get("run_id", "run"))
 
     methods_to_run = _resolve_methods_to_run(cfg)
     comparison_summary: Dict[str, Dict[str, Dict[str, float]]] = {}
@@ -109,21 +94,21 @@ def main(cfg: DictConfig) -> None:
         print({"method": method_name, "status": "start"})
         set_random_seed(int(cfg.seed))
 
-        method_cfg = _method_cfg_copy(cfg, method_name)
+        method_cfg = MethodFactory.load_method_config(cfg, method_name)
         method = MethodFactory.create(method_cfg)
 
-        model_dir = Path("models") / method_name
-        result_dir = Path("results") / method_name
-        plot_dir = Path("plots") / method_name
+        model_dir = Path("models") / dataset_name / method_name
+        result_dir = Path(HydraConfig.get().runtime.output_dir)
+        plot_dir = Path("plots") / dataset_name / experiment_name / distortion_pattern / method_name / run_id
         model_dir.mkdir(parents=True, exist_ok=True)
         result_dir.mkdir(parents=True, exist_ok=True)
         plot_dir.mkdir(parents=True, exist_ok=True)
 
-        plot_uncertainties: Dict[str, Dict[str, np.ndarray]] = {}
+        plot_uncertainties: Dict[str, Dict[str, object]] = {}
         model_path = model_dir / f"base_model_{method_cfg.model.name}.pt"
 
         if model_path.exists():
-            method.load_model(str(model_path))
+            method.load_model(str(model_path), train_loader=base_train_loader, val_loader=base_val_loader)
             print({"method": method_name, "model": "loaded", "path": str(model_path)})
         else:
             method.train_model(
@@ -135,8 +120,22 @@ def main(cfg: DictConfig) -> None:
             method.save_model(str(model_path))
             print({"method": method_name, "model": "trained", "path": str(model_path)})
 
+        # Measure uncertainty on clean validation set (ID baseline)
+        valid_uncertainty_path = result_dir / "valid_uncertainties.pkl"
+        if valid_uncertainty_path.exists():
+            with open(valid_uncertainty_path, "rb") as f:
+                valid_uncertainties = pickle.load(f)
+            print({"method": method_name, "split": "val", "uncertainty": "loaded"})
+        else:
+            valid_uncertainties = method.measure_uncertainty(base_val_loader)
+            with open(valid_uncertainty_path, "wb") as f:
+                pickle.dump(valid_uncertainties, f)
+            print({"method": method_name, "split": "val", "uncertainty": "computed"})
+
+        # Measure uncertainty on each distortion level (OOD)
+        ood_uncertainties: Dict[str, dict] = {}
         for level in level_names:
-            uncertainty_path = result_dir / f"validset_uncertainty_{level}.pkl"
+            uncertainty_path = result_dir / f"ood_uncertainty_{level}.pkl"
 
             if uncertainty_path.exists():
                 with open(uncertainty_path, "rb") as f:
@@ -148,12 +147,16 @@ def main(cfg: DictConfig) -> None:
                     pickle.dump(uncertainty, f)
                 print({"method": method_name, "level": level, "uncertainty": "computed"})
 
-            plot_uncertainties[level] = _plot_uncertainty_view(uncertainty)
+            ood_uncertainties[level] = uncertainty
+            plot_uncertainties[level] = uncertainty
 
+        uncertainty_keys = ("total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty")
         method_summary = {
             level: {
-                k: float(np.mean(v))
-                for k, v in plot_uncertainties[level].items()
+                k: float(torch.mean(plot_uncertainties[level][k]).item())
+                if isinstance(plot_uncertainties[level][k], torch.Tensor)
+                else float(np.mean(plot_uncertainties[level][k]))
+                for k in uncertainty_keys
             }
             for level in level_names
         }
@@ -161,12 +164,16 @@ def main(cfg: DictConfig) -> None:
         with open(result_dir / "uncertainties_summary.json", "w", encoding="utf-8") as f:
             json.dump(method_summary, f, indent=2)
 
-        plot_trend(plot_uncertainties, level_names, plot_dir / "trend.png")
+        trend_plt = trend(plot_uncertainties)
+        trend_plt.tight_layout()
+        trend_plt.savefig(plot_dir / "trend.png")
+        trend_plt.clf()
         comparison_summary[method_name] = method_summary
         print({"method": method_name, "status": "done"})
 
     if len(methods_to_run) > 1:
-        comparison_path = Path("results") / "method_comparison_summary.json"
+        comparison_path = Path("results") / dataset_name / experiment_name / distortion_pattern / run_id / "method_comparison_summary.json"
+        comparison_path.parent.mkdir(parents=True, exist_ok=True)
         with open(comparison_path, "w", encoding="utf-8") as f:
             json.dump(comparison_summary, f, indent=2)
         print({"comparison_summary": str(comparison_path)})

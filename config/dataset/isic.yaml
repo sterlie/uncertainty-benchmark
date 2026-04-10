@@ -3,8 +3,26 @@ batch_size: 16
 num_classes: 2
 channels: 3
 image_size: 224
+input_dim: 150528
 num_workers: 4
 pin_memory: true
 train_subset: null
 test_subset: null
 data_root: ${data.root}/isic
+images_dir: ${dataset.data_root}/MILK10k_Training_Input
+metadata_csv: ${dataset.data_root}/MILK10k_Training_Metadata.csv
+groundtruth_csv: ${dataset.data_root}/MILK10k_Training_GroundTruth.csv
+image_id_col: isic_id
+lesion_id_col: lesion_id
+nested_image_folders: true
+image_type_filter: [dermoscopic]
+label_col: null
+malignant_classes: [AKIEC, BCC, MAL_OTH, MEL, SCCKA]
+val_ratio: 0.2
+test_ratio: 0.2
+
+cv:
+  enabled: false
+  n_splits: 5
+  fold_index: 0
+  seed: ${seed}

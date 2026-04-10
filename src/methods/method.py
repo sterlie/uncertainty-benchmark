@@ -8,6 +8,8 @@ from src.models.model_factory import ModelFactory
 import numpy as np
 from torch.nn import functional as F
 
+from src.utils.metrics import get_acc_score, get_auc_score, get_NLL_score
+
 
 class Method(ABC):
     """Base method class for all uncertainty quantification methods."""
@@ -207,6 +209,24 @@ class Method(ABC):
         """Save model to disk."""
         self.save_pretrained_model(path)
 
-    def load_model(self, path: str) -> None:
-        """Load model from disk."""
+    def load_model(self, path: str, train_loader=None, val_loader=None) -> None:
+        """Load model from disk.
+        
+        Args:
+            path: Path to model checkpoint
+            train_loader: Optional training loader for methods that need to rebuild components
+            val_loader: Optional validation loader for methods that need to rebuild components
+        """
         self.load_pretrained_model(path)
+
+
+    def evaluate_method(self, predictions, targets):
+        nll = get_NLL_score(predictions, targets)
+        accuracy = get_acc_score(predictions, targets)
+        auc = get_auc_score(predictions, targets)
+
+        return {
+            "nll": nll.detach().cpu().numpy(),
+            "accuracy": accuracy.detach().cpu().numpy(),
+            "auc": auc
+        }

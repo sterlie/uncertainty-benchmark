@@ -3,8 +3,7 @@ defaults:
   - model: mlp
   - method: mc_dropout
   - optimizer: sgd
-  - experiment: mnist_baseline
-  - task: benchmark
+  - experiment: aleatoric_trend
   - _self_
 
 seed: 11111
@@ -19,7 +18,8 @@ data:
 output:
   save_model: true
   save_metrics: true
+  run_id: ${now:%Y-%m-%d_%H-%M-%S}
 
 hydra:
   run:
-    dir: ${hydra:runtime.cwd}/results/${now:%Y-%m-%d}/${experiment.name}/${now:%H-%M-%S}
+    dir: ${hydra:runtime.cwd}/results/${now:%Y-%m-%d}/${experiment.name}/${method.name}/${now:%H-%M-%S}

@@ -1,12 +1,7 @@
-import warnings
-
-from src.experiments.aleatoric_trend_refactored import main
+from src.experiments.aleatoric_trend import main as m1
+from src.experiments.epistemic_trend import main as m2
 
 
 if __name__ == "__main__":
-    warnings.warn(
-        "`python -m experiments.run_mnist` has been retired. Use `python -m src.experiments.run_benchmark`.",
-        DeprecationWarning,
-        stacklevel=1,
-    )
-    main()
+    m1()
+    m2()

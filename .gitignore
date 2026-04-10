@@ -6,6 +6,8 @@ uq
 /results/
 /models/
 /plots/
+/Morpho-MNIST/
+/swa_gaussian/
 /uncertainty-benchmark.code-workspace
 
 __pycache__

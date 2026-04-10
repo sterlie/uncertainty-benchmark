@@ -2,6 +2,7 @@ from typing import Callable
 
 import numpy as np
 import os
+import pickle
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -33,6 +34,7 @@ def logsumexp(logits):
     elif logits.ndim == 2:
         score = torch.logsumexp(logits, dim=1, keepdim=False)
     return score
+
 
 
 def centered_cov_torch(x):
@@ -342,3 +344,49 @@ class DDU(Method):
             "variance_aleatoric_uncertainty": torch.zeros(total_uncertainty.size(0)),
             "variance_total_uncertainty": torch.zeros(total_uncertainty.size(0)),
         }
+
+
+    def train_model(self, train_loader, val_loader, **kwargs):
+        """Train the base model and then train the uncertainty method (Gaussian models)."""
+        # Train the neural network
+        self.train_base_model(train_loader, val_loader)
+        # Train the Gaussian mixture models
+        self.train_uncertainty_method(train_loader, val_loader)
+
+    def save_model(self, path: str) -> None:
+        """Save the neural network and Gaussian models."""
+        # Save the neural network
+        self.save_pretrained_model(path)
+        
+        # Save Gaussian models alongside the network
+        if self.gaussian_models is not None:
+            gmm_path = path.replace('.pt', '_gmm.pkl')
+            with open(gmm_path, 'wb') as f:
+                pickle.dump({
+                    'gaussian_models': self.gaussian_models,
+                    'jitter_eps': self.jitter_eps,
+                }, f)
+
+    def load_model(self, path: str, train_loader=None, val_loader=None) -> None:
+        """Load the neural network and Gaussian models.
+        
+        If GMM pickle doesn't exist and training loaders are provided, train GMMs.
+        """
+        # Load the neural network
+        self.load_pretrained_model(path)
+        
+        # Try to load Gaussian models
+        gmm_path = path.replace('.pt', '_gmm.pkl')
+        if os.path.exists(gmm_path):
+            with open(gmm_path, 'rb') as f:
+                gmm_data = pickle.load(f)
+                self.gaussian_models = gmm_data['gaussian_models']
+                self.jitter_eps = gmm_data['jitter_eps']
+        elif train_loader is not None:
+            # If GMM pickle doesn't exist but training loader is available, train GMMs
+            print(f"GMM models not found at {gmm_path}. Training GMMs from training data...")
+            self.train_uncertainty_method(train_loader, val_loader)
+            # Save the trained models so we don't retrain next time
+            self.save_model(path)
+        else:
+            print(f"Warning: GMM models not found at {gmm_path} and no training loader provided.")

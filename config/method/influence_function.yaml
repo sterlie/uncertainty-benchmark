@@ -1,3 +1,4 @@
+name: influence_function
 subset_of_weights: 'all'
 hessian_structure: 'diag'
 

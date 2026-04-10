@@ -146,7 +146,7 @@ class Swag(Method):
         if hasattr(model, "base"):
             model.base.to(self.device)
         n = 0
-        num_batches = len(loader)
+        #num_batches = len(loader)
 
         with torch.no_grad():
             for input, _ in loader:
@@ -163,24 +163,24 @@ class Swag(Method):
 
         model.apply(lambda module: self._set_momenta(module, momenta))
 
-    def build_method(self, rebuild=False, **kwargs):
-        self.train_loader = kwargs['train_loader']
-        if not rebuild:
-            if 'pretrained' in kwargs:
-                pretrained_model = torch.load(kwargs['pretrained'])
-            else:
-                pretrained_model = torch.load(os.path.join(self.config.output.path, self.config.method.name, 'model', 'swag_model.pt'))
-            self.swag_model.load_state_dict(pretrained_model)
-            self.swag_model.to(self.device)
-            return
-        self.train_uncertainty_method(kwargs['train_loader'], kwargs['valid_loader'])
-        output_save_dir = os.path.join(self.config.output.path, self.config.method.name, 'model')
-        os.makedirs(output_save_dir, exist_ok=True)
-        if 'model_name' in kwargs:
-            filename = os.path.join(output_save_dir,kwargs['model_name'])
-        else:
-            filename = os.path.join(output_save_dir, 'swag_model.pt')
-        torch.save(self.swag_model.state_dict(), filename)
+    #def build_method(self, rebuild=False, **kwargs):
+    #    self.train_loader = kwargs['train_loader']
+    #    if not rebuild:
+    #        if 'pretrained' in kwargs:
+    #            pretrained_model = torch.load(kwargs['pretrained'])
+    #        else:
+    #            pretrained_model = torch.load(os.path.join(self.config.output.path, self.config.method.name, 'model', 'swag_model.pt'))
+    #        self.swag_model.load_state_dict(pretrained_model)
+    #        self.swag_model.to(self.device)
+    #        return
+    #    self.train_uncertainty_method(kwargs['train_loader'], kwargs['valid_loader'])
+    #    output_save_dir = os.path.join(self.config.output.path, self.config.method.name, 'model')
+    #    os.makedirs(output_save_dir, exist_ok=True)
+    #    if 'model_name' in kwargs:
+    #        filename = os.path.join(output_save_dir,kwargs['model_name'])
+    #    else:
+    #        filename = os.path.join(output_save_dir, 'swag_model.pt')
+    #    torch.save(self.swag_model.state_dict(), filename)
 
 
     def train_uncertainty_method(self, train_loader, valid_loader):
@@ -234,6 +234,8 @@ class Swag(Method):
 
             print(f"epoch: {epoch+1}/{self.config.method.epochs}, train_loss: {train_res['loss']}, train_acc: {train_res['accuracy']}, test_loss: {test_res['loss']}, test_acc: {test_res['accuracy']}")
 
+
+
     def inference(self, loader):
 
         eps = 1e-12
@@ -264,3 +266,43 @@ class Swag(Method):
 
         #
         return predictions, labels
+
+    # ------------------------------------------------------------------ #
+    # New lifecycle hooks called by the experiment runner                  #
+    # ------------------------------------------------------------------ #
+
+    def train_model(self, train_loader, val_loader, **kwargs):
+        """Train base model then fit SWAG posterior."""
+        self.train_loader = train_loader
+        self.train_base_model(train_loader, val_loader)
+        self.train_uncertainty_method(train_loader, val_loader)
+
+    def save_model(self, path: str) -> None:
+        """Save base model checkpoint and SWAG posterior state alongside it."""
+        self.save_pretrained_model(path)
+        swag_path = path.replace('.pt', '_swag.pt')
+        torch.save(self.swag_model.state_dict(), swag_path)
+
+    def load_model(self, path: str, train_loader=None, val_loader=None) -> None:
+        """Load base model and restore SWAG posterior.
+
+        If the SWAG state file is missing and a train_loader is provided,
+        the posterior is refit automatically (same behaviour as the old
+        ``build_method(rebuild=True)`` path).
+        """
+        self.load_pretrained_model(path)
+        swag_path = path.replace('.pt', '_swag.pt')
+        if os.path.exists(swag_path):
+            self.swag_model.load_state_dict(
+                torch.load(swag_path, weights_only=True, map_location=self.device)
+            )
+            self.swag_model.to(self.device)
+        elif train_loader is not None:
+            print(f"SWAG state not found at {swag_path}. Refitting from training data...")
+            self.train_uncertainty_method(train_loader, val_loader)
+        else:
+            raise FileNotFoundError(
+                f"SWAG state not found at {swag_path} and no train_loader provided to refit."
+            )
+        if train_loader is not None:
+            self.train_loader = train_loader
