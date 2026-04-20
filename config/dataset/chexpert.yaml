@@ -31,6 +31,10 @@ all_classes: [
 
 multilabel: true
 image_id_col: Path
+patient_id_col: null
+sex_col: Sex
+age_col: Age
+frontal_lateral_col: Frontal/Lateral
 pseudo_rgb: false
 crop: null
 blur: null
@@ -41,9 +45,12 @@ num_per_patient: 1
 population_division: by_gender
 alternate_population_division: null
 
-# Age thresholds for map_age_che (>= upper → 0, >= lower → 1, else → 2)
+# Age thresholds: descending (>= upper → 0, >= lower → 1, else → 2)
+age_direction: descending
 age_lower: 50
 age_upper: 70
+
+disease_count_threshold: 1
 
 # Train/val/test split ratios (patient-level)
 train_ratio: 0.6

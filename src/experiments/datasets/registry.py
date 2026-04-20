@@ -5,12 +5,13 @@ from omegaconf import DictConfig
 from src.experiments.datasets.base import DatasetExperimentAdapter
 from src.experiments.datasets.isic_adapter import ISICExperimentAdapter
 from src.experiments.datasets.mnist_adapter import MNISTExperimentAdapter
-from src.experiments.datasets.chexpert_adapter import CHEXPERTExperimentAdapter
+from src.experiments.datasets.chest_adapter import ChestExperimentAdapter
 
 _ADAPTERS = {
     "mnist": MNISTExperimentAdapter,
     "isic": ISICExperimentAdapter,
-    "chexpert": CHEXPERTExperimentAdapter,
+    "chexpert": ChestExperimentAdapter,
+    "nih": ChestExperimentAdapter,
 }
 
 
