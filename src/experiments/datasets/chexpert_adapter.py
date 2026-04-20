@@ -84,10 +84,6 @@ def _make_loader(
     )
 
 
-# ---------------------------------------------------------------------------
-# Patient-level splitting (mirrors CheXpertDataResampleModule.set_split)
-# ---------------------------------------------------------------------------
-
 def _set_split(df, train_frac, val_frac, test_frac, rs):
     """Random split at the dataframe level: test first, then train/val from remainder."""
     test = df.sample(frac=test_frac, random_state=rs)
@@ -135,10 +131,6 @@ def _split_by_patient(cfg: DictConfig, df: pd.DataFrame):
     return train_df, val_df, test_df
 
 
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
-
 def build_chexpert_loaders(cfg: DictConfig, distortion_pattern: str = "plain") -> LoaderBundle:
     merged = _read_merged_table(cfg)
 
@@ -178,10 +170,6 @@ def build_chexpert_loaders(cfg: DictConfig, distortion_pattern: str = "plain") -
 
     return train_loader, val_loader, eval_loaders, level_names
 
-
-# ---------------------------------------------------------------------------
-# Adapter class
-# ---------------------------------------------------------------------------
 
 class CHEXPERTExperimentAdapter(DatasetExperimentAdapter):
     """CheXpert adapter – patient-level split, no cross-validation."""
