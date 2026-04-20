@@ -91,10 +91,18 @@ class Method(ABC):
             assert kwargs['pretrained'] is not None, "Pretrained checkpoint cannot be None to use a pretrained model."
             self.load_pretrained_model(kwargs['pretrained'])
 
+    @property
+    def is_multilabel(self) -> bool:
+        return bool(self.config.dataset.get('multilabel', False))
+
     def train_base_model(self, train_loader: torch.utils.data.DataLoader, val_loader: torch.utils.data.DataLoader, loss_weight=None):
         """Train the model using standard supervised learning."""
         optimizer = self.optimizer
-        criterion = nn.CrossEntropyLoss(loss_weight)
+        multilabel = self.is_multilabel
+        if multilabel:
+            criterion = nn.BCEWithLogitsLoss(pos_weight=loss_weight)
+        else:
+            criterion = nn.CrossEntropyLoss(loss_weight)
 
         best_acc = 0.0
         best_previous_loss = float('inf')
@@ -105,6 +113,7 @@ class Method(ABC):
             self.model.train()
             train_loss = 0
             total_correct = 0
+            total_labels = 0
             for inputs, targets in train_loader:
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
 
@@ -116,7 +125,13 @@ class Method(ABC):
                 optimizer.step()
 
                 train_loss += loss.item() * targets.size(0)
-                total_correct += (outputs.argmax(1) == targets).sum().item()
+                if multilabel:
+                    preds = (outputs > 0).float()
+                    total_correct += (preds == targets).sum().item()
+                    total_labels += targets.numel()
+                else:
+                    total_correct += (outputs.argmax(1) == targets).sum().item()
+                    total_labels += targets.size(0)
 
 
             train_loss = train_loss / len(train_loader.dataset)
@@ -133,13 +148,18 @@ class Method(ABC):
                     loss = criterion(outputs, targets)
 
                     val_loss += loss.item() * targets.size(0)
-                    correct += outputs.max(1)[1].eq(targets).sum().item()
-                    total += targets.size(0)
+                    if multilabel:
+                        preds = (outputs > 0).float()
+                        correct += (preds == targets).sum().item()
+                        total += targets.numel()
+                    else:
+                        correct += outputs.max(1)[1].eq(targets).sum().item()
+                        total += targets.size(0)
 
             val_loss = val_loss / len(val_loader.dataset)
             val_acc = correct / total
 
-            print(f'Epoch {epoch+1}/{epochs} - Train: Loss: {train_loss:.4f}, Accuracy: {total_correct / len(train_loader.dataset):.4f}\nValidation: Loss {val_loss:.4f}, Accuracy: {val_acc:.4f}')
+            print(f'Epoch {epoch+1}/{epochs} - Train: Loss: {train_loss:.4f}, Accuracy: {total_correct / total_labels:.4f}\nValidation: Loss {val_loss:.4f}, Accuracy: {val_acc:.4f}')
 
             if val_loss < best_previous_loss:
                 best_previous_loss = val_loss
@@ -155,7 +175,10 @@ class Method(ABC):
             for inputs, targets in loader:
                 inputs = inputs.to(self.device)
                 outputs = self.model(inputs)
-                probs = F.softmax(outputs, dim=1)
+                if self.is_multilabel:
+                    probs = torch.sigmoid(outputs)
+                else:
+                    probs = F.softmax(outputs, dim=1)
                 predictions.append(probs)
                 labels.append(targets)
 

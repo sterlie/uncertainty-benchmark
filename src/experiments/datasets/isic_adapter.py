@@ -7,119 +7,55 @@ import pandas as pd
 from omegaconf import DictConfig
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from torch.utils.data import DataLoader
-from torchvision import transforms
 
-from src.datasets.isic import SkinISICDataset
-from src.experiments.datasets.base import DatasetExperimentAdapter, LoaderBundle
-
-
-def _subset_df(df: pd.DataFrame, subset_size):
-    if subset_size is None:
-        return df
-    n = min(int(subset_size), len(df))
-    return df.iloc[:n].reset_index(drop=True)
-
-
-def _build_transform(image_size: int, normalize: bool = True):
-    tfms = [
-        transforms.ToPILImage(),
-        transforms.Resize((int(image_size), int(image_size))),
-        transforms.ToTensor(),
-    ]
-    if normalize:
-        tfms.append(
-            transforms.Normalize(
-                mean=(0.485, 0.456, 0.406),
-                std=(0.229, 0.224, 0.225),
-            )
-        )
-    return transforms.Compose(tfms)
-
-
-def _derive_binary_label(merged_df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
-    out = merged_df.copy()
-
-    explicit_label_col = cfg.dataset.get("label_col", None)
-    if explicit_label_col and str(explicit_label_col) in out.columns:
-        out["label"] = out[str(explicit_label_col)].astype(int)
-        return out
-
-    malignant_classes = cfg.dataset.get(
-        "malignant_classes",
-        ["AKIEC", "BCC", "MAL_OTH", "MEL", "SCCKA"],
-    )
-    malignant_classes = [str(c) for c in malignant_classes if str(c) in out.columns]
-
-    if not malignant_classes:
-        raise ValueError(
-            "Unable to derive labels from groundtruth. "
-            "Set dataset.label_col or dataset.malignant_classes in config/dataset/isic.yaml"
-        )
-
-    out["label"] = (out[malignant_classes].astype(float).sum(axis=1) > 0.5).astype(int)
-    return out
+from src.datasets.isic import (
+    DEFAULT_ALL_CLASSES,
+    DEFAULT_SELECTED_CLASSES,
+    SkinISICDataset,
+    build_isic_subgroup_slices,
+    build_isic_train_transform,
+    build_isic_val_transform,
+    prepare_isic_table,
+)
+from src.experiments.datasets.base import DatasetExperimentAdapter, LoaderBundle, subset_df
 
 
 def _read_merged_table(cfg: DictConfig) -> pd.DataFrame:
     data_root = str(cfg.dataset.get("data_root", cfg.data.root))
     metadata_csv = str(cfg.dataset.get("metadata_csv", os.path.join(data_root, "metadata.csv")))
     groundtruth_csv = str(cfg.dataset.get("groundtruth_csv", os.path.join(data_root, "groundtruth.csv")))
-
-    if not os.path.exists(metadata_csv):
-        raise FileNotFoundError(f"ISIC metadata not found: {metadata_csv}")
-    if not os.path.exists(groundtruth_csv):
-        raise FileNotFoundError(f"ISIC groundtruth not found: {groundtruth_csv}")
-
-    meta = pd.read_csv(metadata_csv)
-    gt = pd.read_csv(groundtruth_csv)
-
     lesion_col = str(cfg.dataset.get("lesion_id_col", "lesion_id"))
-    if lesion_col not in meta.columns or lesion_col not in gt.columns:
-        raise ValueError(
-            f"lesion_id_col '{lesion_col}' must exist in both metadata and groundtruth"
-        )
-
-    merged = meta.merge(gt, on=lesion_col, how="inner")
-    if len(merged) == 0:
-        raise ValueError("ISIC metadata/groundtruth merge is empty. Check lesion_id values.")
-
-    image_type_filter = cfg.dataset.get("image_type_filter", None)
-    if image_type_filter and "image_type" in merged.columns:
-        allowed = {str(x).strip().lower() for x in image_type_filter}
-        merged = merged[merged["image_type"].astype(str).str.lower().isin(allowed)].reset_index(drop=True)
-
     image_id_col = str(cfg.dataset.get("image_id_col", "isic_id"))
-    if image_id_col not in merged.columns:
-        raise ValueError(f"image_id_col '{image_id_col}' not found in merged ISIC table")
-
-    merged = _derive_binary_label(merged, cfg)
-    merged["image_id"] = merged[image_id_col].astype(str)
-
+    image_type_filter = cfg.dataset.get("image_type_filter", None)
     images_dir = str(cfg.dataset.get("images_dir", os.path.join(data_root, "images")))
     nested = bool(cfg.dataset.get("nested_image_folders", False))
+    all_classes = cfg.dataset.get("all_classes", DEFAULT_ALL_CLASSES)
+    selected_classes = cfg.dataset.get("selected_classes", cfg.dataset.get("six_classes", DEFAULT_SELECTED_CLASSES))
 
-    if nested:
-        merged["image_path"] = merged.apply(
-            lambda r: os.path.join(images_dir, str(r[lesion_col]), f"{r['image_id']}.jpg"),
-            axis=1,
-        )
-    else:
-        merged["image_path"] = merged["image_id"].map(lambda i: os.path.join(images_dir, f"{i}.jpg"))
+    return prepare_isic_table(
+        metadata_csv=metadata_csv,
+        groundtruth_csv=groundtruth_csv,
+        images_dir=images_dir,
+        lesion_id_col=lesion_col,
+        image_id_col=image_id_col,
+        image_type_filter=image_type_filter,
+        all_classes=all_classes,
+        selected_classes=selected_classes,
+        nested_image_folders=nested,
+    )
 
-    return merged
 
-
-def _make_loader(df: pd.DataFrame, cfg: DictConfig, shuffle: bool) -> DataLoader:
+def _make_loader(df: pd.DataFrame, cfg: DictConfig, shuffle: bool, train: bool = False) -> DataLoader:
     image_size = int(cfg.dataset.get("image_size", 224))
-    normalize = bool(cfg.experiment.get("normalize", True))
     batch_size = int(cfg.dataset.batch_size)
     num_workers = int(cfg.dataset.get("num_workers", 0))
     images_dir = str(cfg.dataset.get("images_dir", os.path.join(str(cfg.dataset.get("data_root", cfg.data.root)), "images")))
+    transform = build_isic_train_transform(image_size) if train else build_isic_val_transform(image_size)
 
     ds = SkinISICDataset(
         img_dir=images_dir,
         groundtruth_csv_file=df[["image_id", "image_path", "label"]].reset_index(drop=True),
-        transform=_build_transform(image_size, normalize=normalize),
+        transform=transform,
     )
     return DataLoader(
         ds,
@@ -158,9 +94,9 @@ def _split_single(cfg: DictConfig, df: pd.DataFrame):
     val_df = df[df[lesion_col].isin(set(val_lesions[lesion_col]))].reset_index(drop=True)
     test_df = df[df[lesion_col].isin(set(test_lesions[lesion_col]))].reset_index(drop=True)
 
-    train_df = _subset_df(train_df, train_subset)
-    val_df = _subset_df(val_df, test_subset)
-    test_df = _subset_df(test_df, test_subset)
+    train_df = subset_df(train_df, train_subset)
+    val_df = subset_df(val_df, test_subset)
+    test_df = subset_df(test_df, test_subset)
     return train_df, val_df, test_df
 
 
@@ -200,9 +136,9 @@ def _split_kfold(cfg: DictConfig, df: pd.DataFrame):
 
     train_subset = cfg.dataset.get("train_subset", None)
     test_subset = cfg.dataset.get("test_subset", None)
-    train_df = _subset_df(train_df, train_subset)
-    val_df = _subset_df(val_df, test_subset)
-    test_df = _subset_df(test_df, test_subset)
+    train_df = subset_df(train_df, train_subset)
+    val_df = subset_df(val_df, test_subset)
+    test_df = subset_df(test_df, test_subset)
     return train_df, val_df, test_df
 
 
@@ -215,13 +151,28 @@ def build_isic_loaders(cfg: DictConfig, distortion_pattern: str = "plain") -> Lo
     else:
         train_df, val_df, test_df = _split_single(cfg, merged)
 
-    train_loader = _make_loader(train_df, cfg, shuffle=True)
+    train_loader = _make_loader(train_df, cfg, shuffle=True, train=True)
     val_loader = _make_loader(val_df, cfg, shuffle=False)
 
-    # Keep runner contract identical: dict of eval loaders keyed by level names.
-    level_name = str(distortion_pattern) if str(distortion_pattern) else "plain"
-    eval_loaders: Dict[str, DataLoader] = {level_name: _make_loader(test_df, cfg, shuffle=False)}
-    level_names = [level_name]
+    subgroup_patterns = {"age", "skin_tone", "hair", "drop", "ink"}
+    pattern = str(distortion_pattern) if str(distortion_pattern) else "plain"
+
+    if pattern in subgroup_patterns:
+        subgroup_frames = build_isic_subgroup_slices(val_df, pattern)
+        eval_loaders = {
+            name: _make_loader(sub_df, cfg, shuffle=False)
+            for name, sub_df in subgroup_frames.items()
+            if len(sub_df) > 0
+        }
+        if not eval_loaders:
+            raise ValueError(
+                f"All subgroup slices for '{pattern}' are empty. "
+                "Check that metadata includes the required subgroup columns."
+            )
+        level_names = list(eval_loaders.keys())
+    else:
+        eval_loaders = {pattern: _make_loader(test_df, cfg, shuffle=False)}
+        level_names = [pattern]
 
     return train_loader, val_loader, eval_loaders, level_names
 

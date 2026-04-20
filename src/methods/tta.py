@@ -52,7 +52,10 @@ class TTA(Method):
                     x = torch.cat([inputs_ for _ in range(T)], dim=0)
                 x = x.to(self.device)
                 output = self.model(x)
-                output = F.softmax(output, dim=-1)
+                if self.is_multilabel:
+                    output = torch.sigmoid(output)
+                else:
+                    output = F.softmax(output, dim=-1)
                 output = output.view(T, len(targets_), -1)
                 outputs.append(output)
                 labels.append(targets_)

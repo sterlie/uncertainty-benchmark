@@ -1,6 +1,6 @@
 name: isic
 batch_size: 16
-num_classes: 2
+num_classes: 6
 channels: 3
 image_size: 224
 input_dim: 150528
@@ -16,13 +16,13 @@ image_id_col: isic_id
 lesion_id_col: lesion_id
 nested_image_folders: true
 image_type_filter: [dermoscopic]
-label_col: null
-malignant_classes: [AKIEC, BCC, MAL_OTH, MEL, SCCKA]
+all_classes: [AKIEC, BCC, BEN_OTH, BKL, DF, INF, MAL_OTH, MEL, NV, SCCKA, VASC]
+selected_classes: [BCC, SCCKA, AKIEC, NV, BKL, MEL]
 val_ratio: 0.2
 test_ratio: 0.2
 
 cv:
-  enabled: false
+  enabled: true
   n_splits: 5
   fold_index: 0
   seed: ${seed}

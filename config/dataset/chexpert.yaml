@@ -3,8 +3,50 @@ batch_size: 16
 num_classes: 12
 channels: 3
 image_size: 224
+input_dim: 150528
 num_workers: 4
 pin_memory: true
 train_subset: null
 test_subset: null
+
 data_root: ${data.root}/chexpert
+images_dir: ${dataset.data_root}/valid
+metadata_csv: ${dataset.data_root}/valid.csv
+
+frontal_lateral: Frontal
+all_classes: [
+    "Enlarged Cardiomediastinum",
+    "Cardiomegaly",
+    "Lung Opacity",
+    "Lung Lesion",
+    "Edema",
+    "Consolidation",
+    "Pneumonia",
+    "Atelectasis",
+    "Pneumothorax",
+    "Pleural Effusion",
+    "Pleural Other",
+    "Fracture",
+]
+
+multilabel: true
+image_id_col: Path
+pseudo_rgb: false
+crop: null
+blur: null
+chosen_disease: null
+num_per_patient: 1
+
+# Population division: by_gender, by_age, by_disease_count
+population_division: by_gender
+alternate_population_division: null
+
+# Age thresholds for map_age_che (>= upper → 0, >= lower → 1, else → 2)
+age_lower: 50
+age_upper: 70
+
+# Train/val/test split ratios (patient-level)
+train_ratio: 0.6
+val_ratio: 0.2
+test_ratio: 0.2
+

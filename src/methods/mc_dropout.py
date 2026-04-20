@@ -61,7 +61,10 @@ class MCDropout(Method):
             for _ in range(self.sample_size):
                 outputs = self.model(inputs)
                 logit_predictions.append(outputs)
-                probs = F.softmax(outputs, dim=1)
+                if self.is_multilabel:
+                    probs = torch.sigmoid(outputs)
+                else:
+                    probs = F.softmax(outputs, dim=1)
                 predictions.append(probs)
 
         predictions = torch.stack(predictions)

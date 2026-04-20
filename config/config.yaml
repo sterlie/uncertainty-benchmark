@@ -1,9 +1,9 @@
 defaults:
-  - dataset: mnist
+  - dataset: isic
   - model: mlp
   - method: mc_dropout
   - optimizer: sgd
-  - experiment: aleatoric_trend
+  - experiment: isic_drop
   - _self_
 
 seed: 11111

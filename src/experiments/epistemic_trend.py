@@ -17,6 +17,7 @@ from src.methods.method_factory import MethodFactory
 from src.utils.visualization import trend
 
 
+
 def set_random_seed(seed: int) -> None:
 	random.seed(seed)
 	np.random.seed(seed)
@@ -75,7 +76,9 @@ def main(cfg: DictConfig) -> None:
 
 	os.makedirs(cfg.data.root, exist_ok=True)
 
-	distortion_pattern = str(cfg.experiment.get("distortion_pattern", "fracture"))
+	if "distortion_pattern" not in cfg.experiment:
+		raise ValueError("cfg.experiment.distortion_pattern must be set explicitly.")
+	distortion_pattern = str(cfg.experiment.distortion_pattern)
 	adapter = get_dataset_adapter(cfg)
 	base_train_loader, base_val_loader, eval_loaders, level_names = adapter.build_loaders(
 		cfg,

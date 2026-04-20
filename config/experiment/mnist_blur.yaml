@@ -1,4 +1,4 @@
-name: aleatoric_trend
+name: mnist_blur
 distortion_pattern: blur
 
 # training

@@ -1,0 +1,12 @@
+name: mnist_fracture
+distortion_pattern: fracture
+
+# training
+epochs: 3
+lr: 0.001
+weight_decay: 0.0
+normalize: True
+
+# increasing Morpho-MNIST fracture severity used to induce epistemic uncertainty trend
+severity_levels: 10
+

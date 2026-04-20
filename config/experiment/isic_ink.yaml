@@ -1,0 +1,6 @@
+name: isic_ink
+epochs: 3
+lr: 0.001
+weight_decay: 0.0
+normalize: true
+distortion_pattern: ink
