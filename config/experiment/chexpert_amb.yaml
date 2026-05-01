@@ -1,7 +1,7 @@
-name: nih_gender
+name: chexpert_amb
 epochs: 3
 lr: 0.001
 weight_decay: 0.0
 normalize: true
-distortion_pattern: by_gender
+distortion_pattern: amb
 population_division: by_gender

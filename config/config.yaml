@@ -22,4 +22,4 @@ output:
 
 hydra:
   run:
-    dir: ${hydra:runtime.cwd}/results/${now:%Y-%m-%d}/${experiment.name}/${method.name}/${now:%H-%M-%S}
+    dir: ${hydra:runtime.cwd}/results/${now:%Y-%m-%d}/${experiment.name}/${now:%H-%M-%S}

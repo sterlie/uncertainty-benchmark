@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from typing import Dict
 
+import numpy as np
 import pandas as pd
 from omegaconf import DictConfig
 from sklearn.model_selection import StratifiedKFold, train_test_split
@@ -76,18 +77,20 @@ def _split_single(cfg: DictConfig, df: pd.DataFrame):
         .drop_duplicates(subset=[lesion_col])
         .reset_index(drop=True)
     )
+    # stratify on dominant class (argmax) since label is a multilabel vector
+    lesion_labels["_stratify"] = lesion_labels["label"].apply(lambda v: int(np.array(v).argmax()))
 
     train_lesions, test_lesions = train_test_split(
         lesion_labels,
         test_size=float(cfg.dataset.get("test_ratio", 0.2)),
         random_state=int(cfg.seed),
-        stratify=lesion_labels["label"],
+        stratify=lesion_labels["_stratify"],
     )
     train_lesions, val_lesions = train_test_split(
         train_lesions,
         test_size=float(cfg.dataset.get("val_ratio", 0.2)),
         random_state=int(cfg.seed),
-        stratify=train_lesions["label"],
+        stratify=train_lesions["_stratify"],
     )
 
     train_df = df[df[lesion_col].isin(set(train_lesions[lesion_col]))].reset_index(drop=True)
@@ -115,9 +118,10 @@ def _split_kfold(cfg: DictConfig, df: pd.DataFrame):
         .drop_duplicates(subset=[lesion_col])
         .reset_index(drop=True)
     )
+    lesion_labels["_stratify"] = lesion_labels["label"].apply(lambda v: int(np.array(v).argmax()))
 
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-    splits = list(skf.split(lesion_labels, lesion_labels["label"]))
+    splits = list(skf.split(lesion_labels, lesion_labels["_stratify"]))
     trainval_idx, test_idx = splits[fold_index]
 
     trainval_lesions = lesion_labels.iloc[trainval_idx].reset_index(drop=True)
@@ -127,7 +131,7 @@ def _split_kfold(cfg: DictConfig, df: pd.DataFrame):
         trainval_lesions,
         test_size=float(cfg.dataset.get("val_ratio", 0.2)),
         random_state=seed,
-        stratify=trainval_lesions["label"],
+        stratify=trainval_lesions["_stratify"],
     )
 
     train_df = df[df[lesion_col].isin(set(train_lesions[lesion_col]))].reset_index(drop=True)

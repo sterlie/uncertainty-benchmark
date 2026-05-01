@@ -6,16 +6,150 @@ from pathlib import Path
 from typing import Dict, List
 
 import hydra
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 from hydra.core.hydra_config import HydraConfig
-
+from sklearn.metrics import roc_auc_score
+from torch.utils.data import ConcatDataset, DataLoader, Subset
 
 from src.methods.method_factory import MethodFactory
 from src.experiments.datasets import get_dataset_adapter
+from src.experiments.tasks import run_ood_subgroup_task
 from src.utils.visualization import trend, entropy
 
+# ── Ambiguity task ─────────────────────────────────────────────────────────
+
+def _concat_uncertainty_key(results: list, key: str) -> np.ndarray:
+    return np.concatenate([r[key].detach().cpu().numpy() for r in results])
+
+
+def _plot_amb_distributions(results: list, targets_np: np.ndarray, plot_dir: Path, prefix: str):
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    for idx, ut in enumerate(["total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty"]):
+        scores = _concat_uncertainty_key(results, ut)
+        axes[idx].hist(scores[targets_np == 0], label="Clear", bins=50, alpha=0.5)
+        axes[idx].hist(scores[targets_np == 1], label="Ambiguous", bins=50, alpha=0.5)
+        axes[idx].set_xlabel("Score")
+        axes[idx].set_ylabel("Count")
+        axes[idx].legend()
+        axes[idx].set_title(ut)
+    plt.tight_layout()
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    fig.savefig(plot_dir / f"{prefix}_uncertainty_distributions.png")
+    plt.close(fig)
+
+
+def _eval_amb_detection(results: list, targets: torch.Tensor, performance: dict, prefix: str) -> dict:
+    targets_np = targets.cpu().numpy()
+    for ut in ["total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty"]:
+        scores = _concat_uncertainty_key(results, ut)
+        m_clear = float(np.mean(scores[targets_np == 0]))
+        m_amb = float(np.mean(scores[targets_np == 1]))
+        std_clear = float(np.std(scores[targets_np == 0]))
+        std_amb = float(np.std(scores[targets_np == 1]))
+        performance[f"{prefix}_dist_{ut}"] = [m_clear, m_amb]
+        performance[f"{prefix}_dist_{ut}_std"] = [std_clear, std_amb]
+        auroc = float(roc_auc_score(targets_np, scores)) if len(np.unique(targets_np)) > 1 else float("nan")
+        performance[f"{prefix}_auroc_{ut}"] = auroc
+        print(f"  {ut}: clear_mean={m_clear:.4f}  amb_mean={m_amb:.4f}  AUROC={auroc:.4f}")
+    return performance
+
+
+def run_ambiguous_uncertainty_task(
+    cfg,
+    method,
+    val_loader: DataLoader,
+    test_loader: DataLoader,
+    result_dir: Path,
+    plot_dir: Path,
+    num_samples: int = -1,
+) -> Dict[str, object]:
+    """Tests whether uncertainty is higher for inherently ambiguous images.
+
+    Enables negative_label=True on val/test datasets so ambiguous samples
+    return label==-1, then evaluates AUROC for each uncertainty type.
+    """
+    performance: dict = {}
+
+    val_ds = val_loader.dataset
+    test_ds = test_loader.dataset
+    val_ds.negative_label = True
+    test_ds.negative_label = True
+
+    if num_samples and num_samples > 0:
+        val_ds = Subset(val_ds, range(min(num_samples, len(val_ds))))
+        test_ds = Subset(test_ds, range(min(num_samples, len(test_ds))))
+
+    combined_ds = ConcatDataset([val_ds, test_ds])
+    combined_loader = DataLoader(
+        combined_ds,
+        batch_size=test_loader.batch_size,
+        shuffle=False,
+        num_workers=getattr(test_loader, "num_workers", 0),
+    )
+    print(f"Ambiguity task: {len(val_ds)} val + {len(test_ds)} test = {len(combined_ds)} total")
+
+    result_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = result_dir / "amb_task_results.pkl"
+    if cache_path.exists():
+        with open(cache_path, "rb") as f:
+            results = pickle.load(f)
+        print("Loaded cached amb_task results.")
+    else:
+        results = [method.measure_uncertainty(combined_loader)]
+        with open(cache_path, "wb") as f:
+            pickle.dump(results, f)
+
+    all_predictions = torch.cat([r["predictions"] for r in results], dim=0)
+    all_targets = torch.cat([r["ground_truth"] for r in results], dim=0)
+
+    amb_targets = (all_targets == -1).any(dim=-1).long()
+    n_amb = int(amb_targets.sum().item())
+    n_clear = int((amb_targets == 0).sum().item())
+    print(f"Ambiguous: {n_amb}  Clear: {n_clear}")
+
+    if n_amb == 0:
+        print(
+            "WARNING: No ambiguous samples found (amb_targets all 0).  "
+            "This usually means the dataset CSV has no -1 (uncertain) labels — "
+            "e.g. CheXpert valid.csv uses only 0/1 labels.  "
+            "To run the ambiguity task, point 'dataset.metadata_csv' to a CSV "
+            "that contains -1 labels (e.g. the CheXpert train.csv).  "
+            "Ambiguity-task metrics will be NaN."
+        )
+        for ut in ["total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty"]:
+            performance[f"amb_dist_{ut}"] = [float("nan"), float("nan")]
+            performance[f"amb_dist_{ut}_std"] = [float("nan"), float("nan")]
+            performance[f"amb_auroc_{ut}"] = float("nan")
+            print(f"  {ut}: clear_mean=nan  amb_mean=nan  AUROC=nan  (no ambiguous samples)")
+    else:
+        _plot_amb_distributions(results, amb_targets.cpu().numpy(), plot_dir, prefix="amb")
+        performance = _eval_amb_detection(results, amb_targets, performance, prefix="amb")
+
+    clear_mask = (amb_targets == 0)
+    if clear_mask.sum() > 0:
+        preds_clear = (all_predictions[clear_mask] > 0.5)
+        true_clear = (all_targets[clear_mask] == 1)
+        miscls_targets = (preds_clear != true_clear).any(dim=-1).long()
+        miscls_results = [{
+            k: v[clear_mask] if isinstance(v, torch.Tensor) and v.shape[0] == len(all_targets) else v
+            for k, v in r.items()
+        } for r in results]
+        print(f"Misclassification: {miscls_targets.sum().item()} / {clear_mask.sum().item()}")
+        _plot_amb_distributions(miscls_results, miscls_targets.cpu().numpy(), plot_dir, prefix="miscls")
+        performance = _eval_amb_detection(miscls_results, miscls_targets, performance, prefix="miscls")
+
+    with open(result_dir / "amb_task_performance.json", "w") as f:
+        json.dump(performance, f, indent=4)
+    print(f"Saved amb_task results to {result_dir / 'amb_task_performance.json'}")
+
+    val_ds.negative_label = False
+    test_ds.negative_label = False
+    return performance
 
 
 def set_random_seed(seed: int) -> None:
@@ -79,10 +213,14 @@ def main(cfg: DictConfig) -> None:
     if "distortion_pattern" not in cfg.experiment:
         raise ValueError("cfg.experiment.distortion_pattern must be set explicitly.")
     distortion_pattern = str(cfg.experiment.distortion_pattern)
+
+    # The ambiguity task uses its own loader logic; for other patterns build normally.
+    is_amb = (distortion_pattern == "amb")
+
     adapter = get_dataset_adapter(cfg)
     base_train_loader, base_val_loader, eval_loaders, level_names = adapter.build_loaders(
         cfg,
-        distortion_pattern=distortion_pattern,
+        distortion_pattern=distortion_pattern if not is_amb else "plain",
     )
 
     dataset_name = str(cfg.dataset.name)
@@ -100,8 +238,10 @@ def main(cfg: DictConfig) -> None:
         method = MethodFactory.create(method_cfg)
 
         model_dir = Path("models") / dataset_name / method_name
-        result_dir = Path(HydraConfig.get().runtime.output_dir)
-        plot_dir = Path("plots") / dataset_name / experiment_name / distortion_pattern / method_name / run_id
+        hydra_out = Path(HydraConfig.get().runtime.output_dir)
+        result_dir = hydra_out / method_name
+        # Mirror results path under plots/: plots/YYYY-MM-DD/experiment_name/HH-MM-SS/method_name
+        plot_dir = Path("plots") / Path(*hydra_out.parts[-3:]) / method_name
         model_dir.mkdir(parents=True, exist_ok=True)
         result_dir.mkdir(parents=True, exist_ok=True)
         plot_dir.mkdir(parents=True, exist_ok=True)
@@ -121,6 +261,21 @@ def main(cfg: DictConfig) -> None:
             )
             method.save_model(str(model_path))
             print({"method": method_name, "model": "trained", "path": str(model_path)})
+
+        # ── Ambiguity task ────────────────────────────────────────────────
+        if is_amb:
+            amb_plot_dir = plot_dir / "amb"
+            run_ambiguous_uncertainty_task(
+                cfg=cfg,
+                method=method,
+                val_loader=base_val_loader,
+                test_loader=list(eval_loaders.values())[0],
+                result_dir=result_dir,
+                plot_dir=amb_plot_dir,
+                num_samples=int(cfg.get("num_samples", -1)),
+            )
+            comparison_summary[method_name] = {}
+            continue
 
         # Measure uncertainty on clean validation set (ID baseline)
         valid_uncertainty_path = result_dir / "valid_uncertainties.pkl"
@@ -170,6 +325,20 @@ def main(cfg: DictConfig) -> None:
         trend_plt.tight_layout()
         trend_plt.savefig(plot_dir / "trend.png")
         trend_plt.clf()
+
+        # ── OOD subgroup evaluation ───────────────────────────────────
+        _subgroup_patterns = {"by_age", "by_disease_count", "by_gender", 
+                              "age", "ink", "drop", "hair", "skin_tone"}
+        if distortion_pattern in _subgroup_patterns:
+            run_ood_subgroup_task(
+                cfg=cfg,
+                method=method,
+                eval_loaders=eval_loaders,
+                level_names=level_names,
+                result_dir=result_dir / "ood_subgroup",
+                plot_dir=plot_dir / "ood_subgroup",
+            )
+
         comparison_summary[method_name] = method_summary
         print({"method": method_name, "status": "done"})
 

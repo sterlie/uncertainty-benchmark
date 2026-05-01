@@ -21,6 +21,7 @@ selected_classes: [BCC, SCCKA, AKIEC, NV, BKL, MEL]
 val_ratio: 0.2
 test_ratio: 0.2
 
+
 cv:
   enabled: true
   n_splits: 5

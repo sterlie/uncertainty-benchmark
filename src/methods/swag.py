@@ -3,11 +3,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
+from pathlib import Path
+from omegaconf import OmegaConf
+from torch.utils.data import DataLoader, Subset
 from swa_gaussian.swag.posteriors import SWAG
 import os
 
 from src.methods import register_method
 from src.methods.method import Method
+from src.methods.utils import multi_label_uncertainty, multi_class_uncertainty
+from src.metrics import F1Score, Accuracy, Precision, Recall
 
 
 @register_method('swag')
@@ -18,87 +23,135 @@ class Swag(Method):
             self.model.__class__,
             no_cov_mat=False,
             max_num_models=20,
-            config=config
+            config=config,
         )
         self.swag_model.to(self.device)
-
+        self.sub_population = config.method.get('sub_population', 1.0)
+        self.scale = config.method.get('scale', 0.1)
+        self.swag_batch_size = config.method.get('swag_batch_size', 64)
+        self.uncertainty_per_class = config.method.get('uncertainty_per_class', False)
+        self.train_loader = None
+        self.model_dir = "swag"
         self.eps = 1e-12
 
+    def init_optimizer(self):
+        arguments = OmegaConf.to_container(self.config.optimizer)
+        arguments.pop("name", None)
+        arguments.pop("epochs", None)
+        scheduler_arguments = arguments.pop("scheduler", None)
+        self.optimizer = torch.optim.SGD(
+            self.model.parameters(),
+            lr=arguments["lr"] * 100,
+            weight_decay=arguments.get("weight_decay", 0.0),
+            momentum=arguments.get("momentum", 0.9),
+        )
+        self.scheduler = (
+            torch.optim.lr_scheduler.MultiStepLR(
+                self.optimizer,
+                scheduler_arguments["milestones"],
+                scheduler_arguments["gamma"],
+            )
+            if scheduler_arguments is not None
+            else None
+        )
+
+    def _make_metrics(self):
+        return [
+            F1Score(self.config, "classification", num_classes=self.num_classes, seeking=False),
+            Accuracy(self.config, "classification", num_classes=self.num_classes),
+            Precision(self.config, "classification", num_classes=self.num_classes),
+            Recall(self.config, "classification", num_classes=self.num_classes),
+        ]
+
     def train_epoch(self, loader, criterion):
-        loss_sum = 0.0
-        correct = 0.0
-        verb_stage = 0
-
-        num_objects_current = 0
-        num_batches = len(loader)
-
         self.model.train()
+        metrics = self._make_metrics()
+        total_loss = 0.0
+        total_metrics = [0.0] * len(metrics)
+        total_samples = 0
 
-        for i, (input, target) in enumerate(loader):
-            input, target = input.to(self.device), target.to(self.device)
+        for inputs, targets, *_ in loader:
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
+            if self.is_multilabel:
+                targets = targets.float()
+            else:
+                targets = targets.squeeze(1).long() if targets.ndim == 2 else targets.long()
 
-            output = self.model(input)
-            loss = criterion(output, target)
+            outputs = self.model(inputs)
+            loss = criterion(outputs, targets)
 
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
 
-            loss_sum += loss.data.item() * input.size(0)
+            total_loss += loss.item()
+            predictions = torch.sigmoid(outputs) if self.is_multilabel else torch.softmax(outputs, dim=-1)
+            for i, metric in enumerate(metrics):
+                total_metrics[i] += metric.evaluate(predictions, targets).item() * inputs.size(0)
+            total_samples += inputs.size(0)
 
-            pred = output.data.argmax(1, keepdim=True)
-            correct += pred.eq(target.data.view_as(pred)).sum().item()
+        if self.scheduler is not None:
+            self.scheduler.step()
 
-            num_objects_current += input.size(0)
-
-        return {
-            "loss": loss_sum / num_objects_current,
-            "accuracy": correct / num_objects_current * 100.0,
-        }
+        avg_loss = total_loss / len(loader)
+        metrics_str = ", ".join(f"{m.name}: {total_metrics[i] / total_samples:.4f}" for i, m in enumerate(metrics))
+        print(f'Training...   Loss: {avg_loss:.4f}, {metrics_str}')
+        return {"loss": avg_loss, "accuracy": total_metrics[1] / total_samples}
 
     def eval(self, loader, model, criterion):
-        loss_sum = 0.0
-        correct = 0.0
-        num_objects_total = len(loader.dataset)
-
         model.eval()
+        metrics = self._make_metrics()
+        total_loss = 0.0
+        total_metrics = [0.0] * len(metrics)
+        total_samples = 0
 
         with torch.no_grad():
-            for i, (input, target) in enumerate(loader):
-                input, target = input.to(self.device), target.to(self.device)
+            for inputs, targets, *_ in loader:
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
+                if self.is_multilabel:
+                    targets = targets.float()
+                else:
+                    targets = targets.squeeze(1).long() if targets.ndim == 2 else targets.long()
 
-                output = model(input)
-                loss = criterion(output, target)
+                outputs = model(inputs)
+                loss = criterion(outputs, targets)
 
-                loss_sum += loss.item() * input.size(0)
+                total_loss += loss.item()
+                predictions = torch.sigmoid(outputs) if self.is_multilabel else torch.softmax(outputs, dim=-1)
+                for i, metric in enumerate(metrics):
+                    total_metrics[i] += metric.evaluate(predictions, targets).item() * inputs.size(0)
+                total_samples += inputs.size(0)
 
-                pred = output.data.argmax(1, keepdim=True)
-                correct += pred.eq(target.data.view_as(pred)).sum().item()
+        avg_loss = total_loss / len(loader)
+        metrics_str = ", ".join(f"{m.name}: {total_metrics[i] / total_samples:.4f}" for i, m in enumerate(metrics))
+        print(f'Evaluation... Loss: {avg_loss:.4f}, {metrics_str}')
+        return {"loss": avg_loss, "accuracy": total_metrics[1] / total_samples}
 
+    def run_model(self, inputs, use_swag=False, **kwargs):
+        if use_swag:
+            return self.swag_model(inputs)
+        return self.model(inputs)
+
+    def run_predictions(self, test_loader):
+        all_predictions = []
+        all_targets = []
+        self.swag_model.eval()
+        with torch.no_grad():
+            for inputs, targets, *_ in test_loader:
+                preds = self.predict(inputs)
+                all_predictions.append(preds.cpu())
+                all_targets.append(targets)
         return {
-            "loss": loss_sum / num_objects_total,
-            "accuracy": correct / num_objects_total * 100.0,
+            "predictions": torch.cat(all_predictions, dim=0),
+            "targets": torch.cat(all_targets, dim=0),
         }
 
-    def predict(self, loader):
-        predictions = list()
-        targets = list()
-
-        self.model.eval()
-
-        offset = 0
+    def predict(self, inputs):
+        inputs = inputs.to(self.device)
+        self.swag_model.eval()
+        self.swag_model.to(self.device)
         with torch.no_grad():
-            for input, target in loader:
-                # input = input.cuda(non_blocking=True)
-                input =input.to(self.device)
-                output = self.model(input)
-
-                batch_size = input.size(0)
-                predictions.append(F.softmax(output, dim=1).cpu().numpy())
-                targets.append(target.numpy())
-                offset += batch_size
-
-        return {"predictions": np.vstack(predictions), "targets": np.concatenate(targets)}
+            return self.run_model(inputs, use_swag=True)
 
     def _check_bn(self, module, flag):
         if issubclass(module.__class__, torch.nn.modules.batchnorm._BatchNorm):
@@ -183,88 +236,103 @@ class Swag(Method):
     #    torch.save(self.swag_model.state_dict(), filename)
 
 
-    def train_uncertainty_method(self, train_loader, valid_loader):
-        if self.config.weighted:
-            if 'weights' in self.config.dataset:
-                weights = torch.tensor(self.config.dataset.weights).float().to(self.device)
-            else:
-                labels = torch.tensor(train_loader.dataset.labels)
-                class_counts = torch.bincount(labels, minlength=self.num_classes)
-                class_counts[class_counts == 0] = 1
+    def train_uncertainty_method(self, train_loader, val_loader):
+        self.train_loader = train_loader
+        model_name = self.config.model.name
+        path = (
+            Path(os.getcwd())
+            / self.model_dir
+            / "checkpoints"
+            / f"swag_model_{model_name}.pt"
+        )
+        if path.exists():
+            self.swag_model.load_state_dict(
+                torch.load(path, map_location=self.device)
+            )
+            print(f"Loaded pretrained swag model from {path}")
+            return
 
-                N = labels.size(0)
-                weights = N / (self.num_classes * class_counts.float())
-                weights = weights.to(self.device)
-            print("weights", weights)
+        if self.is_multilabel:
+            criterion = nn.BCEWithLogitsLoss()
         else:
-            weights = None
-        criterion = nn.CrossEntropyLoss(weights)
+            criterion = nn.CrossEntropyLoss()
+
         sgd_ens_preds = None
-        sgd_targets = None
         n_ensembled = 0.0
+        swa_start = self.config.method.swa_start
+
         for epoch in range(self.config.method.epochs):
-
-            if (epoch + 1) > self.config.method.swa_start:
-                for group in self.optimizer.param_groups:
-                    group['lr'] = self.config.optimizer.lr * self.config.method.lr_increase_factor
-
             train_res = self.train_epoch(train_loader, criterion)
+            test_res = self.eval(val_loader, self.model, criterion)
 
-            test_res = self.eval(valid_loader, self.model, criterion)
-            if (epoch + 1) > self.config.method.swa_start:
-                # sgd_preds, sgd_targets = utils.predictions(loaders["test"], model)
-                sgd_res = self.predict(valid_loader)
-                sgd_preds = sgd_res["predictions"]
-                sgd_targets = sgd_res["targets"]
-                print("updating sgd_ens")
-                if sgd_ens_preds is None:
-                    sgd_ens_preds = sgd_preds.copy()
-                else:
-                    # TODO: rewrite in a numerically stable way
-                    sgd_ens_preds = sgd_ens_preds * n_ensembled / (
-                            n_ensembled + 1
-                    ) + sgd_preds / (n_ensembled + 1)
-                n_ensembled += 1
+            if (epoch + 1) > swa_start:
                 self.swag_model.collect_model(self.model)
-
-                self.swag_model.sample(0.5, True)
+                self.swag_model.sample(scale=0.0, cov=True)
                 self.bn_update(train_loader, self.swag_model)
-                swag_res = self.eval(valid_loader, self.swag_model, criterion)
-                print(f"epoch: {epoch+1}/{self.config.method.epochs}, swag_loss: {swag_res['loss']}, swag_acc: {swag_res['accuracy']}")
 
-            print(f"epoch: {epoch+1}/{self.config.method.epochs}, train_loss: {train_res['loss']}, train_acc: {train_res['accuracy']}, test_loss: {test_res['loss']}, test_acc: {test_res['accuracy']}")
+                sgd_res = self.run_predictions(val_loader)
+                sgd_preds = sgd_res["predictions"]
+                if sgd_ens_preds is None:
+                    sgd_ens_preds = sgd_preds.clone()
+                else:
+                    sgd_ens_preds = (
+                        sgd_ens_preds * n_ensembled / (n_ensembled + 1)
+                        + sgd_preds / (n_ensembled + 1)
+                    )
+                n_ensembled += 1
+
+                swag_res = self.eval(val_loader, self.swag_model, criterion)
+                print(
+                    f"epoch: {epoch+1}/{self.config.method.epochs}, "
+                    f"swag_loss: {swag_res['loss']:.4f}, swag_acc: {swag_res['accuracy']:.4f}"
+                )
+
+            print(
+                f"epoch: {epoch+1}/{self.config.method.epochs}, "
+                f"train_loss: {train_res['loss']:.4f}, train_acc: {train_res['accuracy']:.4f}, "
+                f"test_loss: {test_res['loss']:.4f}, test_acc: {test_res['accuracy']:.4f}"
+            )
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(self.swag_model.state_dict(), path)
+        print(f"Saved swag model to {path}")
 
 
 
     def inference(self, loader):
-
-        eps = 1e-12
         n_samples = self.config.method.sample_size
         n_data = len(loader.dataset)
 
-        # store per-sample predictive probabilities
         predictions = torch.zeros((n_samples, n_data, self.num_classes))
-        labels = torch.zeros(n_data)
+        if self.is_multilabel:
+            labels = torch.zeros(n_data, self.num_classes)
+        else:
+            labels = torch.zeros(n_data)
+
+        sub_size = int(len(self.train_loader.dataset) * self.sub_population)
+        indices = torch.randperm(len(self.train_loader.dataset))[:sub_size]
+        sub_loader = DataLoader(
+            Subset(self.train_loader.dataset, indices),
+            batch_size=self.swag_batch_size, shuffle=True,
+        )
 
         for i in range(n_samples):
-            self.swag_model.train()
-            self.swag_model.sample(scale=0.5, cov=True)
-            self.bn_update(self.train_loader, self.swag_model)
+            self.swag_model.sample(scale=self.scale, cov=True)
+            self.bn_update(sub_loader, self.swag_model)
             self.swag_model.eval()
-
+            torch.manual_seed(i)
             k = 0
-            for input, target in tqdm(loader):
-                input = input.to(self.device)
-                self.swag_model.sample(scale=0.5, cov=True)
-                torch.manual_seed(i)
-                with torch.no_grad():
-                    output = self.swag_model(input)
-                    probs = F.softmax(output, dim=1)
-                    predictions[i, k:k + input.size(0), :] = probs
-                    labels[k:k + input.size(0)] = target.to(self.device)
-                k += input.size(0)
+            with torch.no_grad():
+                for batch in tqdm(loader):
+                    inputs = batch[0].to(self.device)
+                    targets = batch[1]
+                    output = self.swag_model(inputs)
+                    probs = torch.sigmoid(output) if self.is_multilabel else F.softmax(output, dim=1)
+                    predictions[i, k:k + inputs.size(0)] = probs.cpu()
+                    if i == 0:
+                        labels[k:k + inputs.size(0)] = targets
+                    k += inputs.size(0)
 
-        #
         return predictions, labels
 
     # ------------------------------------------------------------------ #
@@ -272,10 +340,13 @@ class Swag(Method):
     # ------------------------------------------------------------------ #
 
     def train_model(self, train_loader, val_loader, **kwargs):
-        """Train base model then fit SWAG posterior."""
+        """SWAG trains the base model internally — no separate pre-train step."""
         self.train_loader = train_loader
-        self.train_base_model(train_loader, val_loader)
         self.train_uncertainty_method(train_loader, val_loader)
+
+    def train_base_model(self, train_loader, val_loader, loss_weight=None):
+        # SWAG trains the base model inside train_uncertainty_method; skip the base class loop.
+        return
 
     def save_model(self, path: str) -> None:
         """Save base model checkpoint and SWAG posterior state alongside it."""

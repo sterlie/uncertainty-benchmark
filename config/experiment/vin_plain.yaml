@@ -1,7 +1,7 @@
-name: nih_disease
+name: vin_plain
 epochs: 3
 lr: 0.001
 weight_decay: 0.0
 normalize: true
-distortion_pattern: by_disease_count
+distortion_pattern: plain
 population_division: by_disease_count

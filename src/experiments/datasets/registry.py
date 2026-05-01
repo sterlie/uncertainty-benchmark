@@ -12,6 +12,7 @@ _ADAPTERS = {
     "isic": ISICExperimentAdapter,
     "chexpert": ChestExperimentAdapter,
     "nih": ChestExperimentAdapter,
+    "vin": ChestExperimentAdapter,
 }
 
 

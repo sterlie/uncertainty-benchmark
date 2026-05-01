@@ -15,8 +15,8 @@ from .evidential_dl import EvidentialDeepLearning
 
 __all__ = [
     'Method', 'MethodFactory', 'register_method',
-    'MCDropout', 'DDU',
-    'TTA', 'LaplaceApproximation',
-    'Ensemble', 'HetXL', 'Entropy', 
-    'Swag', 'InfluenceFunction', 'EvidentialDeepLearning', 
-] #'Swag'
+    'DDU', 'Ensemble', 'Entropy' , 'HetXL', 
+    'LaplaceApproximation', 'MCDropout', 
+    'Swag', 'TTA'
+    ] 
+

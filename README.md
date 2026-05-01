@@ -1,81 +1,205 @@
+# A Realistic Medical Imaging Benchmark for Uncertainty Quantification
 
+This repository contains the code for the uncertainty quantification benchmark experiments presented in the paper _A Realistic Medical Imaging Benchmark for Uncertainty Quantification_ ***INSERT LINK*** by ***INSERT AUTHORS***
 
-private notes to understand what is going on: 
+## Repository Structure
 
-Set up: 
-1) Train model on clean data. 
-    Datasets: mnist, chest X-ray (CheXpert, NIH, VinDr-CXR), dermatology (MILK10k). 
-2) Apply UQ method: 
-    probibalistic methods: MC dropout, deep ensemble, SWAG, laplace, test-time augmentation, HETXL. 
-    Deterministic: Entropy, DDU. 
-2) Create contolled condition where uncertainty is expected to increase.  
+```
+uncertainty-benchmark/
+├── config/                   # Hydra configuration (structured with config groups)
+│   ├── config.yaml           # Root config — composes dataset, experiment, model, method
+│   ├── dataset/             # One yaml per dataset (chexpert, isic, mnist, nih, vin)
+│   ├── experiment/          # One yaml per experiment (e.g. isic_drop, chexpert_gender)
+│   ├── method/              # One yaml per UQ method (e.g. entropy, mc_dropout)
+│   ├── model/               # One yaml per model backbone (e.g. DenseNet, mlp)
+│   └── optimizer/           # Optimizer configs
+├── src/
+│   ├── datasets/            # Dataset loaders and torch Dataset classes
+│   ├── experiments/
+│   │   ├── run_experiment.py # Main Hydra entry point
+│   │   ├── tasks.py          # OOD subgroup evaluation task
+│   │   └── datasets/        # Per-dataset adapters (isic_adapter, chest_adapter, …)
+│   ├── methods/             # UQ method implementations + MethodFactory
+│   ├── models/              # Model definitions
+│   ├── metrics/             # Evaluation metrics
+│   └── utils/               # Shared utilities (visualisation, seeding, etc.)
+├── data/                    # Raw and processed datasets
+├── models/                  # Saved model checkpoints
+├── results/                 # Experiment outputs written by Hydra
+├── plots/                   # Generated figures
+├── Makefile                  # Convenience targets for running experiments
+└── requirements.txt
+```
 
-To test Aletoric uncertainty: 
-MNIST -> data distortions 
-chest xray -> young/old, patient have more dieseases . 
-Dermatology -> age group, underrepresetned skintones. 
-
-To test Epistemic uncertainty: 
-MNIST -> blur images.
-chest xray -> radiologist disagreement
-Dermatology -> poor image quality, comments of 'gel', 'water drop', or 'dermoscopy liquid'. 
-
-Disentanflement of uncertainty: AUROC curve comparison. 
-------------------------------------------------------------------------------------------------
-
-
-
-# Uncertainty Benchmark (MNIST starter)
-
-This repo now has a Hydra-based, reproducible MNIST experiment flow.
-
-## 1) Install
+Configuration is managed with [Hydra](https://hydra.cc). The root `config/config.yaml` composes
+one config group entry from each of `dataset/`, `experiment/`, `method/`, `model/`, and `optimizer/`.
+Any value can be overridden on the command line:
 
 ```bash
+# override individual keys
+python -m src.experiments.run_experiment dataset=isic experiment=isic_drop method=mc_dropout
+
+# or via the Makefile shortcuts
+make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=mc_dropout
+```
+
+## Experiment Types
+
+Each experiment config sets `distortion_pattern`, which controls what evaluation is run:
+
+| Pattern type | Example values | What runs |
+|---|---|---|
+| **Severity distortion** | `blur`, `fracture`, `thinning` | Uncertainty measured per severity level → trend plot + summary JSON |
+| **Subgroup shift** | `by_age`, `by_gender`, `by_disease_count`, `age`, `drop`, `hair`, `ink`, `skin_tone` | OOD detection between demographic/attribute subgroups → ROC curves, histograms, line plot, misclassification AUROC |
+| **Ambiguity** | `amb` | Uncertainty compared between clearly-labelled and ambiguously-labelled samples |
+
+## Environment Setup
+
+Python 3.10 or newer is required. The environment can be set up using pip or conda.
+
+### Option A — pip + venv
+
+```bash
+python -m venv uq
+source uq/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## 2) One-line commands
-
-### Experiment CLI (primary interface)
-```bash
-python -m src.experiments.aleatoric_trend dataset=mnist method=mc_dropout model=mlp
-python -m src.experiments.epistemic_trend dataset=mnist method=mc_dropout model=mlp
-```
-
-### Quick smoke test
-```bash
-python -m src.experiments.aleatoric_trend dataset=mnist dataset.train_subset=500 dataset.test_subset=100 experiment.epochs=1
-```
-
-## 3) Makefile shortcuts
+### Option B — conda
 
 ```bash
-make setup-mnist
-make run-mnist
-make run-mnist-quick
-make run-benchmark
+conda create -n uq python=3.10 -y
+conda activate uq
+
+# Install PyTorch first (adjust cuda version as needed, e.g. cu118, cu121, or cpu)
+conda install pytorch==2.10.0 torchvision==0.25.0 pytorch-cuda=12.1 -c pytorch -c nvidia -y
+
+# Install remaining dependencies
+pip install -r requirements.txt
 ```
 
-All Makefile shortcuts now resolve to `src.experiments.*` entrypoints.
+> **Note:** `laplace-torch` is a pip-only package and will always be installed via pip regardless of which option you choose.
 
-## 4) Config structure (Hydra)
-
-- `config/config.yaml`
-- `config/dataset/` (`mnist`, `chexpert`, `nih`, `vin`, `isic`)
-- `config/experiment/` (`mnist_baseline`, `aleatoric_trend`)
-
-Override any setting from CLI, for example:
+After installing the main dependencies, install the two bundled local packages in editable mode:
 
 ```bash
-python -m src.experiments.aleatoric_trend dataset=nih seed=123 experiment.epochs=10 dataset.batch_size=8
+pip install -e Morpho-MNIST/
+pip install -e swa_gaussian/
 ```
 
-## 5) Reproducibility
+## How to run benchmark
 
-Each run writes outputs to a timestamped Hydra directory under `results/`, including:
+### Check out available methods
 
-- `metrics.json` (history + resolved config + environment)
-- `model.pt` (if enabled)
+List all registered UQ methods:
 
-Data is local-only for now (no DVC).
+```bash
+make list-methods
+```
+
+The available methods are:
+
+| Method | Config key |
+|---|---|
+| Baseline entropy | `entropy` |
+| MC Dropout | `mc_dropout` |
+| Test-Time Augmentation | `TTA` |
+| Deep Deterministic Uncertainty | `ddu` |
+| Deep Ensemble | `ensemble` |
+| Repulsive Ensemble | `repulsive_ensemble` |
+| Heteroscedastic XL | `het_xl` |
+| Evidential Deep Learning | `evidential_dl` |
+| Laplace Approximation | `laplace_approximation` |
+| SWAG | `swag` |
+| Influence Function | `influence_function` |
+| QUAM | `quam` |
+
+Pass `method=all_methods` to run all of the above sequentially in a single invocation.
+
+### Check out available dataset-specific experiments
+
+List all available experiments:
+
+```bash
+make list-experiments
+```
+
+Experiments are organised by dataset:
+
+| Dataset | Experiment key | Description |
+|---|---|---|
+| ISIC | `isic_drop` | Dermatoscope dropout artefact |
+| ISIC | `isic_hair` | Hair occlusion |
+| ISIC | `isic_ink` | Ink marker artefact |
+| ISIC | `isic_age` | Patient age shift |
+| ISIC | `isic_skin_tone` | Skin tone shift |
+| MNIST | `mnist_blur` | Gaussian blur |
+| MNIST | `mnist_fracture` | Morphological fracture |
+| MNIST | `mnist_thinning` | Morphological thinning |
+| CheXpert | `chexpert_gender` | Gender subgroup shift |
+| CheXpert | `chexpert_age` | Age subgroup shift |
+| CheXpert | `chexpert_disease` | Disease label count shift |
+| CheXpert | `chexpert_amb` | Ambiguous label detection |
+| CheXpert | `chexpert_plain` | No distortion (baseline) |
+| NIH | `nih_gender` | Gender subgroup shift |
+| NIH | `nih_age` | Age subgroup shift |
+| NIH | `nih_disease` | Disease label count shift |
+| NIH | `nih_plain` | No distortion (baseline) |
+| VinDr | `vin_amb` | Ambiguous label detection |
+| VinDr | `vin_disease` | Disease label count shift |
+| VinDr | `vin_plain` | No distortion (baseline) |
+
+### Running experiments
+
+**Generic entry point** — works for any dataset/experiment combination:
+
+```bash
+make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=mc_dropout
+make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=all_methods  # run all methods
+```
+
+**Dataset shortcuts** — use pre-set defaults for each dataset family:
+
+```bash
+# ISIC examples (full dataset)
+make run-isic  EXPERIMENT=isic_drop      MODEL=mlp METHOD=all_methods
+make run-isic  EXPERIMENT=isic_hair      MODEL=mlp METHOD=mc_dropout
+make run-isic  EXPERIMENT=isic_ink       MODEL=mlp METHOD=entropy
+make run-isic  EXPERIMENT=isic_age       MODEL=mlp METHOD=all_methods
+
+# MNIST examples (full dataset)
+make run-mnist EXPERIMENT=mnist_blur     MODEL=mlp METHOD=all_methods
+make run-mnist EXPERIMENT=mnist_fracture MODEL=mlp METHOD=entropy
+make run-mnist EXPERIMENT=mnist_thinning MODEL=mlp METHOD=mc_dropout
+
+# CheXpert / NIH / VinDr examples (full dataset)
+make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=all_methods
+make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=ddu
+make run-nih      EXPERIMENT=nih_age         MODEL=DenseNet METHOD=mc_dropout
+make run-vin      EXPERIMENT=vin_amb         MODEL=DenseNet METHOD=entropy
+
+# Use a subset for quick iteration
+make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=ddu TRAIN_SUBSET=100 TEST_SUBSET=50
+```
+
+**Key overridable parameters:**
+
+| Parameter | Makefile variable | Typical value for chest |
+|---|---|---|
+| Number of training samples | `TRAIN_SUBSET` | `null` (all data) |
+| Number of test samples | `TEST_SUBSET` | `null` (all data) |
+| Model backbone | `MODEL` | `DenseNet` |
+| UQ method | `METHOD` | `all_methods` |
+
+Any Hydra config key can also be overridden directly via `ARGS`:
+
+```bash
+make run-chexpert EXPERIMENT=chexpert_gender ARGS="experiment.lr=1e-4"
+```
+
+## Citation 
+
+## Licence
+
+## Contact

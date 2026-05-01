@@ -89,12 +89,9 @@ def prepare_isic_table(
         raise ValueError("Some selected_classes are not present in merged table.")
     
     # save groundtruth class label in '_class_name' row 
-    merged["_class_name"] = merged[all_classes].idxmax(axis=1)
-    merged = merged[merged["_class_name"].isin(selected_classes)].reset_index(drop=True)
-    if len(merged) == 0:
-        raise ValueError("No rows remain after filtering selected_classes.")
-    
-    merged["label"] = merged[selected_present].values.argmax(axis=1)
+    # save groundtruth class label as a float32 multilabel vector
+    label_matrix = merged[selected_present].values.astype("float32")
+    merged["label"] = [label_matrix[i] for i in range(len(label_matrix))]
     merged["image_id"] = merged[image_id_col].astype(str)
 
 
@@ -107,7 +104,7 @@ def prepare_isic_table(
     else:
         merged["image_path"] = merged["image_id"].map(lambda i: os.path.join(images_dir, f"{i}.jpg"))
 
-    return merged.drop(columns=["_class_name"])
+    return merged
 
 
 def build_isic_subgroup_slices(df: pd.DataFrame, subgroup: str) -> Dict[str, pd.DataFrame]:
@@ -173,12 +170,12 @@ class SkinISICDataset(torch.utils.data.Dataset):
         self.labels = []
 
         for _, row in groundtruth_csv_file.iterrows():
-            # Preferred path from adapter; fallback keeps original image_id-based behavior.
             if "image_path" in groundtruth_csv_file.columns:
                 self.images.append(str(row["image_path"]))
             else:
                 self.images.append(os.path.join(img_dir, str(row["image_id"]) + ".jpg"))
-            self.labels.append(int(row["label"]))
+            # label is a scalar class index (argmax of the one-hot vector)
+            self.labels.append(int(np.array(row["label"], dtype="float32").argmax()))
 
         self.transform = transform
 
@@ -189,7 +186,7 @@ class SkinISICDataset(torch.utils.data.Dataset):
         image = np.array(Image.open(self.images[idx]).convert("RGB"))
         if self.transform is not None:
             image = self.transform(image)
-        label = self.labels[idx]
+        label = torch.tensor(self.labels[idx], dtype=torch.long)
         if not isinstance(image, torch.Tensor):
             image = torch.from_numpy(np.asarray(image))
-        return image.float(), torch.tensor(label, dtype=torch.long)
+        return image.float(), label

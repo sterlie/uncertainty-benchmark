@@ -7,5 +7,5 @@ lr: 0.001
 weight_decay: 0.0
 normalize: True
 
-# increasing Morpho-MNIST fracture severity used to induce epistemic uncertainty trend
+# Morpho-MNIST thinning at different severity levels
 severity_levels: [0.1, 0.3, 0.5, 0.7, 0.9]

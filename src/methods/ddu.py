@@ -19,26 +19,41 @@ _SN_ELIGIBLE = (nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.Linear)
 REMOVE_SN = lambda m: nn.utils.parametrize.remove_parametrizations(m, "weight", leave_parametrized=True)
 
 
-def entropy(logits, eps=1e-6):
-    p = F.softmax(logits, dim=1)
-    log_p = F.log_softmax(logits, dim=1)
-    p_log_p = p.double() * torch.clamp(log_p, min=np.log(eps)).double()
-    entropy = -torch.sum(p_log_p, dim=1)
+
+def entropy(logits, multi_label=False, reduction=True, eps=1e-6):
+    if multi_label:
+        probs = torch.sigmoid(logits).clamp(min=eps, max=1 - eps)
+        entropy = -(probs * torch.log(probs) + (1 - probs) * torch.log(1 - probs))
+        entropy = entropy.mean(dim=1) if reduction else entropy
+    else:
+        p = F.softmax(logits, dim=1)
+        log_p = F.log_softmax(logits, dim=1)
+        p_log_p = p.double() * torch.clamp(log_p, min=np.log(eps)).double()
+        entropy = -torch.sum(p_log_p, dim=1)
     return entropy.float()
 
 
-def logsumexp(logits):
-    if logits.ndim == 3:
-        score = torch.logsumexp(logits, dim=2, keepdim=False)
-        # score = score.mean(dim=1)
-    elif logits.ndim == 2:
+def logsumexp(logits, multi_label=False, reduction=True):
+    if multi_label:
+        if logits.ndim == 3:
+            if logits.shape[2] == 1:
+                score = torch.max(torch.logsumexp(logits, dim=2, keepdim=False), torch.logsumexp(-logits, dim=2, keepdim=False))
+            else:
+                score = torch.max(torch.logsumexp(logits[..., :1], dim=2, keepdim=False), torch.logsumexp(logits[..., 1:], dim=2, keepdim=False))
+            score = score.mean(dim=1) if reduction else score
+        else:
+            score = torch.logsumexp(logits, dim=1, keepdim=False)
+            score = score if reduction else score.unsqueeze(1).repeat(1, logits.shape[1])
+    else:
         score = torch.logsumexp(logits, dim=1, keepdim=False)
     return score
 
 
-
 def centered_cov_torch(x):
     n = x.shape[0]
+    if n <= 1:
+        # Not enough samples to compute covariance; return identity matrix
+        return torch.eye(x.shape[1], dtype=x.dtype, device=x.device)
     res = 1 / (n - 1) * x.t().mm(x)
     return res
 
@@ -49,7 +64,16 @@ def get_embeddings(
     num_samples = len(loader.dataset)
     embeddings = torch.empty((num_samples, num_dim), dtype=dtype, device=storage_device)
 
-    labels = torch.empty(num_samples, dtype=torch.int, device=storage_device)
+    # Peek at first batch to determine label shape (single-label 1D vs multi-label 2D)
+    first_data, first_label = next(iter(loader))
+    first_label = first_label.to(device)
+    if first_label.ndim == 2 and first_label.shape[1] > 1:
+        # multi-label: keep (N, num_classes)
+        labels = torch.empty((num_samples, first_label.shape[1]), dtype=torch.int, device=storage_device)
+        multi_label = True
+    else:
+        labels = torch.empty(num_samples, dtype=torch.int, device=storage_device)
+        multi_label = False
 
     with torch.no_grad():
         start = 0
@@ -57,7 +81,10 @@ def get_embeddings(
             data = data.to(device)
             label = label.to(device)
 
-            label = label.squeeze(1).long() if label.ndim == 2 else label.long()
+            if multi_label:
+                label = label.long()
+            else:
+                label = label.squeeze(1).long() if label.ndim == 2 else label.long()
 
             if isinstance(net, nn.DataParallel):
                 out = net.module(data)
@@ -125,10 +152,31 @@ def gmm_get_logits(gmm, embeddings):
 
 def gmm_fit(embeddings, labels, num_classes):
     with torch.no_grad():
-        classwise_mean_features = torch.stack([torch.mean(embeddings[labels == c], dim=0) for c in range(num_classes)])
-        classwise_cov_features = torch.stack(
-            [centered_cov_torch(embeddings[labels == c] - classwise_mean_features[c]) for c in range(num_classes)]
-        )
+        if labels.ndim == 2:
+            # multi-label: for class c select samples where label[:, c] == 1
+            def _mask(c):
+                return labels[:, c].bool()
+        else:
+            def _mask(c):
+                return labels == c
+
+        num_dim = embeddings.shape[1]
+        classwise_mean_features = []
+        classwise_cov_features = []
+        for c in range(num_classes):
+            class_embs = embeddings[_mask(c)]
+            if class_embs.shape[0] == 0:
+                # No samples for this class — use zero mean and identity covariance
+                mean = torch.zeros(num_dim, dtype=embeddings.dtype, device=embeddings.device)
+                cov = torch.eye(num_dim, dtype=embeddings.dtype, device=embeddings.device)
+            else:
+                mean = torch.mean(class_embs, dim=0)
+                cov = centered_cov_torch(class_embs - mean)
+            classwise_mean_features.append(mean)
+            classwise_cov_features.append(cov)
+
+        classwise_mean_features = torch.stack(classwise_mean_features)
+        classwise_cov_features = torch.stack(classwise_cov_features)
         print(classwise_mean_features.shape, classwise_cov_features.shape)
 
     with torch.no_grad():
@@ -302,7 +350,14 @@ class DDU(Method):
             for key, value in result.items():
                 results[key] = torch.cat([results[key], value]) if key in results else value
             gt.extend(targets)
-        print("acc", (results['predictions'].argmax(dim=-1) == results['ground_truth']).sum(), len(results['ground_truth']))
+        preds = results['predictions']
+        gt_tensor = results['ground_truth']
+        if gt_tensor.ndim == 2:
+            # multi-label: count samples where every label matches
+            correct = ((preds > 0.5).long() == gt_tensor.long()).all(dim=-1).sum()
+        else:
+            correct = (preds.argmax(dim=-1) == gt_tensor).sum()
+        print("acc", correct.item(), len(gt_tensor))
         return results
 
     def do_measure_uncertainty(self, inputs: torch.Tensor, targets: torch.Tensor):

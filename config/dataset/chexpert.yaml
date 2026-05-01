@@ -4,8 +4,8 @@ num_classes: 12
 channels: 3
 image_size: 224
 input_dim: 150528
-num_workers: 4
-pin_memory: true
+num_workers: 0
+pin_memory: false
 train_subset: null
 test_subset: null
 
@@ -44,9 +44,10 @@ num_per_patient: 1
 # Population division: by_gender, by_age, by_disease_count
 population_division: by_gender
 alternate_population_division: null
+# Restrict train/val to specific subgroup values (null = all subgroups).
+# E.g. ["Female"] trains only on females; test always keeps all subgroups.
+train_subgroups: null
 
-# Age thresholds: descending (>= upper → 0, >= lower → 1, else → 2)
-age_direction: descending
 age_lower: 50
 age_upper: 70
 

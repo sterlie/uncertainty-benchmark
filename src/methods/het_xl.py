@@ -25,11 +25,16 @@ class HetXL(Method):
     def __init__(self, config):
         self.sample_size = config.method.get('sample_size', 100)
         self.matrix_rank = config.method.get('matrix_rank', 16)
-        self.output_features = config.method.get('output_features', 512)
         self.temperature = config.method.get('temperature', 1.0)
         self.use_het = config.method.get('use_het', False)
         self.num_classes = config.dataset.get('num_classes', 10)
-        self.output_features = self.num_classes if self.use_het else self.output_features
+        # use_het=True  → samples in logit space (num_classes dims)
+        # use_het=False → samples in feature space (hidden_dim dims); output_features
+        #                 config value is ignored to avoid shape mismatches.
+        if self.use_het:
+            self.output_features = self.num_classes
+        else:
+            self.output_features = config.model.get('hidden_dim', config.method.get('output_features', 512))
         super(HetXL, self).__init__(config)
         self.ood_threshold = config.method.get('ood_threshold', 0.0)
         self.misclassify_threshold = config.method.get('misclassify_threshold', self.ood_threshold)

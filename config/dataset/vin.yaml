@@ -1,10 +1,61 @@
 name: vin
 batch_size: 16
-num_classes: 2
+num_classes: 14
 channels: 3
 image_size: 224
+input_dim: 150528
 num_workers: 4
 pin_memory: true
 train_subset: null
 test_subset: null
+
 data_root: ${data.root}/vin
+images_dir: ${dataset.data_root}
+metadata_csv: ${dataset.data_root}/annotations/train.csv
+
+multilabel: true
+
+# VinDr-CXR raw CSV column names (annotation-level; preprocessed internally)
+image_id_col: image_id
+patient_id_col: image_id
+sex_col: null
+age_col: null
+frontal_lateral_col: null
+frontal_lateral: null
+
+all_classes: [
+    "Aortic enlargement",
+    "Atelectasis",
+    "Calcification",
+    "Cardiomegaly",
+    "Consolidation",
+    "ILD",
+    "Infiltration",
+    "Lung Opacity",
+    "Nodule/Mass",
+    "Other lesion",
+    "Pleural effusion",
+    "Pleural thickening",
+    "Pneumothorax",
+    "Pulmonary fibrosis",
+]
+
+pseudo_rgb: false
+crop: null
+blur: null
+chosen_disease: null
+
+# Population division: VinDr has no gender/age metadata
+# Only by_disease_count is meaningful; use plain for simple evaluation
+population_division: by_disease_count
+alternate_population_division: null
+# Restrict train/val to specific subgroup values (null = all subgroups).
+# E.g. [0] trains only on low-disease-count patients.
+train_subgroups: null
+
+disease_count_threshold: 2
+
+# Train/val/test split ratios (image-level, matching old repo)
+train_ratio: 0.6
+val_ratio: 0.1
+test_ratio: 0.3

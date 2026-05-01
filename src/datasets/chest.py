@@ -1,9 +1,12 @@
-"""Unified chest X-ray dataset module for CheXpert and NIH.
+"""Unified chest X-ray dataset module for CheXpert, NIH, and VinDr-CXR.
 
-Both datasets share the same structure: multilabel disease classification on
-chest X-ray images with patient-level metadata (gender, age) and identical
-transform pipelines. Differences (column names, age grouping direction,
-disease labels, path resolution) are parameterised via config.
+All three datasets share the same multilabel disease classification structure
+with identical transform pipelines. Differences (column names, age grouping
+direction, disease labels, path resolution, presence of gender/age metadata)
+are parameterised via config and dataset-specific defaults in chest_adapter.py.
+
+VinDr-CXR note: has no gender or age metadata; only by_disease_count population
+division is meaningful, and only ambiguity experiments are supported.
 """
 
 import os
@@ -15,7 +18,7 @@ import PIL.Image as Image
 import torch
 import torchvision.transforms as T
 
-# ── CheXpert defaults ────────────────────────────────────────────────────
+# CheXpert classes  
 
 CHEXPERT_CLASSES = [
     "Enlarged Cardiomediastinum", "Cardiomegaly", "Lung Opacity", "Lung Lesion",
@@ -25,7 +28,7 @@ CHEXPERT_CLASSES = [
 
 CHEXPERT_GENDER_MAP = {"Female": 0, "Male": 1}
 
-# ── NIH defaults ─────────────────────────────────────────────────────────
+# NIH classes
 
 NIH_CLASSES = [
     "Atelectasis", "Consolidation", "Infiltration", "Pneumothorax", "Edema",
@@ -35,31 +38,36 @@ NIH_CLASSES = [
 
 NIH_GENDER_MAP = {"F": 0, "M": 1}
 
-# ── Age mapping ──────────────────────────────────────────────────────────
 
+# VIN classes
+_VIN_LABELS_FULL = [
+    "Aortic enlargement", "Atelectasis", "Calcification",
+    "Cardiomegaly", "Consolidation", "ILD", "Infiltration",
+    "Lung Opacity", "Nodule/Mass", "Other lesion", "Pleural effusion",
+    "Pleural thickening", "Pneumothorax", "Pulmonary fibrosis", "No finding",  # index 14 - "No finding" – dropped from training labels
+]
 
+VIN_CLASSES = _VIN_LABELS_FULL[:-1]  # 14 disease classes used for training
+
+# Age mapping
 def map_age(age, age_lower=50, age_upper=70, direction="descending"):
     """Map age to group index (3 groups).
-
-    direction='descending' (CheXpert-style): 0 = old (>=upper), 1 = middle, 2 = young
-    direction='ascending'  (NIH-style):      0 = young (<lower), 1 = middle, 2 = old
+    0 = young (<lower), 1 = middle, 2 = old
     """
-    if direction == "descending":
-        if age >= age_upper:
-            return 0
-        elif age >= age_lower:
-            return 1
-        return 2
-    else:  # ascending
-        if age < age_lower:
-            return 0
-        elif age < age_upper:
-            return 1
-        return 2
+    #if direction == "descending":
+    #    if age >= age_upper:
+    #        return 0
+    #    elif age >= age_lower:
+    #        return 1
+    #    return 2
+    #else:  # ascending
+    if age < age_lower:
+        return 0
+    elif age < age_upper:
+        return 1
+    return 2
 
-
-# ── Transforms (shared by all chest X-ray datasets) ─────────────────────
-
+    Transformation 
 
 def center_crop(img):
     """Crop tensor image to a centered square (minimum of H, W)."""
@@ -70,18 +78,7 @@ def center_crop(img):
     return img[:, start_y:start_y + crop_size, start_x:start_x + crop_size]
 
 
-def build_chest_val_transform(image_size: int = 224, crop: int = None):
-    tfms = []
-    if crop is not None:
-        tfms.append(T.Resize([crop, crop]))
-        tfms.append(T.CenterCrop([image_size, image_size]))
-    else:
-        tfms.append(T.Lambda(center_crop))
-        tfms.append(T.Resize([image_size, image_size]))
-    return T.Compose(tfms)
-
-
-def build_chest_train_transform(image_size: int = 224, crop: int = None, blur: int = None):
+def build_chest_transform(image_size: int = 224, crop: int = None, training: bool = False,  blur: int = None):
     tfms = []
     if crop is not None:
         tfms.append(T.Resize([crop, crop]))
@@ -89,15 +86,15 @@ def build_chest_train_transform(image_size: int = 224, crop: int = None, blur: i
     else:
         tfms.append(T.Lambda(center_crop))
         tfms.append(T.Resize([image_size, image_size]))
-    tfms.append(T.RandomHorizontalFlip(p=0.5))
-    tfms.append(T.RandomApply(transforms=[T.RandomAffine(degrees=15, scale=(0.9, 1.1))], p=0.5))
     if blur is not None:
         tfms.append(T.GaussianBlur(kernel_size=blur, sigma=(0.5, 2.0)))
+    if training: 
+        tfms.append(T.RandomHorizontalFlip(p=0.5))
+        tfms.append(T.RandomApply(transforms=[T.RandomAffine(degrees=15, scale=(0.9, 1.1))], p=0.5))
     return T.Compose(tfms)
 
 
-# ── Table preparation ────────────────────────────────────────────────────
-
+# Data table preperation 
 
 def _extract_chexpert_patient_id(csv_path: str) -> str:
     """Extract patient id from CheXpert path, e.g. '.../valid/patient64541/...' -> 'patient64541'."""
@@ -138,10 +135,11 @@ def prepare_chest_table(
     selected_classes: Iterable[str] = None,
     path_resolver: Callable[[str, str], str] = None,
     patient_id_extractor: Callable[[str], str] = None,
+    df_preprocessor: Optional[Callable[[pd.DataFrame], pd.DataFrame]] = None,
 ) -> pd.DataFrame:
-    """Build a normalised chest X-ray dataframe.
+    """Builds a chest X-ray dataframe.
 
-    Works for both CheXpert and NIH via the configurable column names
+    Works for CheXpert, NIH, and VinDr-CXR via the configurable column names
     and path / patient-id resolution callbacks.
 
     Returns a DataFrame with columns:
@@ -151,6 +149,9 @@ def prepare_chest_table(
         raise FileNotFoundError(f"Metadata CSV not found: {metadata_csv}")
 
     df = pd.read_csv(metadata_csv)
+
+    if df_preprocessor is not None:
+        df = df_preprocessor(df)
 
     if image_id_col not in df.columns:
         raise ValueError(f"Column '{image_id_col}' not found in CSV")
@@ -197,6 +198,14 @@ def prepare_chest_table(
         "labels": labels,
     })
 
+    # raw_labels: fractional (VinDr) or -1/0/1 (CheXpert) for ambiguity tasks.
+    # Preprocessors can inject a '_raw_labels' column (list-per-row) before
+    # binarisation; otherwise raw_labels == labels.
+    if "_raw_labels" in df.columns:
+        out["raw_labels"] = [np.array(r, dtype=np.float32) for r in df["_raw_labels"].tolist()]
+    else:
+        out["raw_labels"] = labels
+
     # Preserve metadata columns for population division / subgroup slicing
     if sex_col and sex_col in df.columns:
         out["sex"] = df[sex_col].values
@@ -209,15 +218,13 @@ def prepare_chest_table(
     return out
 
 
-# ── Subgroup slicing ─────────────────────────────────────────────────────
-
+# Subgroup slicing
 
 def build_chest_subgroup_slices(
     df: pd.DataFrame,
     subgroup: str,
     age_lower: int = 50,
     age_upper: int = 70,
-    age_direction: str = "descending",
     disease_count_threshold: int = 1,
 ) -> Dict[str, pd.DataFrame]:
     """Split a chest X-ray dataframe into subgroup-specific slices."""
@@ -230,7 +237,7 @@ def build_chest_subgroup_slices(
     if subgroup == "by_age":
         df = df.copy()
         df["_age_group"] = df["age"].apply(
-            lambda a: map_age(a, age_lower, age_upper, direction=age_direction))
+            lambda a: map_age(a, age_lower, age_upper))
         return {
             f"age_group_{g}": df[df["_age_group"] == g].drop(columns=["_age_group"]).reset_index(drop=True)
             for g in sorted(df["_age_group"].unique())
@@ -248,17 +255,18 @@ def build_chest_subgroup_slices(
     )
 
 
-# ── Dataset class ────────────────────────────────────────────────────────
+# Chest x-ray dataset class
 
 
 class ChestXrayDataset(torch.utils.data.Dataset):
-    """Unified dataset for chest X-ray images (CheXpert, NIH).
+    """Unified dataset for chest X-ray images (CheXpert, NIH, VinDr-CXR).
 
     - Loads images as RGB via PIL
     - Converts to tensor via T.ToTensor()
     - Applies augment transforms (CenterCrop/Resize + optional augmentation)
     - Labels are binarized at __getitem__ time: (label > 0) → 1.0, else → 0.0
     - Optionally returns meta and fine_meta for population division
+    - VinDr: no gender/age columns; use population_division='by_disease_count'
     """
 
     def __init__(
@@ -269,9 +277,7 @@ class ChestXrayDataset(torch.utils.data.Dataset):
         population_division="by_gender",
         gender_map=None,
         age_lower=50,
-        age_upper=70,
-        age_direction="descending",
-        disease_count_threshold=1,
+        age_upper=70,        disease_count_threshold=1,
         pseudo_rgb=False,
         negative_label=False,
     ):
@@ -280,7 +286,6 @@ class ChestXrayDataset(torch.utils.data.Dataset):
         self.population_division = population_division
         self.age_lower = age_lower
         self.age_upper = age_upper
-        self.age_direction = age_direction
         self.disease_count_threshold = disease_count_threshold
         self.pseudo_rgb = pseudo_rgb
         self.negative_label = negative_label
@@ -291,19 +296,21 @@ class ChestXrayDataset(torch.utils.data.Dataset):
         if gender_map is None:
             gender_map = CHEXPERT_GENDER_MAP
 
+        has_raw = "raw_labels" in metadata_df.columns
+
         self.samples = []
         for _, row in metadata_df.iterrows():
             img_path = (str(row["image_path"]) if "image_path" in metadata_df.columns
                         else os.path.join(img_dir, str(row["image_id"])))
             label = np.array(row["labels"], dtype=np.float32)
+            raw_label = np.array(row["raw_labels"], dtype=np.float32) if has_raw else label.copy()
 
             if population_division == "by_gender":
                 meta = gender_map.get(row.get("sex", ""), 0)
                 fine_meta = meta
             elif population_division == "by_age":
                 age_val = int(row.get("age", 0))
-                meta = map_age(age_val, age_lower=age_lower, age_upper=age_upper,
-                               direction=age_direction)
+                meta = map_age(age_val, age_lower=age_lower, age_upper=age_upper)
                 fine_meta = age_val
             elif population_division == "by_disease_count":
                 meta = int(int(np.sum(label > 0)) > disease_count_threshold)
@@ -315,6 +322,7 @@ class ChestXrayDataset(torch.utils.data.Dataset):
             self.samples.append({
                 "image_path": img_path,
                 "label": label,
+                "raw_label": raw_label,
                 "meta": meta,
                 "fine_meta": fine_meta,
             })
@@ -333,9 +341,19 @@ class ChestXrayDataset(torch.utils.data.Dataset):
 
         label = torch.from_numpy(sample["label"])
         if self.negative_label:
+            # unified ambiguity/disagreement threshold that works for both CheXpert and VinDr:
+            #   raw == 1  (or >= 1)    → 1  (unanimous positive)
+            #   raw == 0               → 0  (unanimous negative)
+            #   raw < 0 OR 0 < raw < 1 → -1 (any inter-rater disagreement or CheXpert uncertain)
+            raw = torch.from_numpy(sample["raw_label"])
             label = torch.where(
-                label > 0.0, torch.ones_like(label),
-                torch.where(label < -0.5, -torch.ones_like(label), torch.zeros_like(label)))
+                raw >= 1.0, torch.ones_like(raw),
+                torch.where(
+                    (raw < 0) | (raw > 0),
+                    -torch.ones_like(raw),
+                    torch.zeros_like(raw),
+                ),
+            )
         else:
             label = (label > 0).float()
 

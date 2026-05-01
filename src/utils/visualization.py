@@ -6,6 +6,66 @@ from IPython.core.pylabtools import figsize
 from sklearn.metrics import roc_curve, roc_auc_score
 import matplotlib.pyplot as plt
 
+def plot_uncertainty_line_plot(
+    groups: list,
+    plot_title: str,
+):
+    """Mean ± variance line plot across N named groups.
+
+    *groups* is a list of ``(label, results)`` tuples where *results* is a list
+    of dicts with keys ``total_uncertainty``, ``aleatoric_uncertainty``,
+    ``epistemic_uncertainty`` whose values are numpy arrays or tensors.
+    """
+    from matplotlib.ticker import MaxNLocator
+
+    uncertainty_types = ["total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty"]
+
+    def _collect(results, ut):
+        arrs = []
+        for r in results:
+            v = r[ut]
+            arrs.append(v.detach().cpu().numpy() if isinstance(v, torch.Tensor) else np.asarray(v))
+        return np.concatenate(arrs)
+
+    labels = [g[0] for g in groups]
+    x = np.arange(len(groups))
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    for idx, ut in enumerate(uncertainty_types):
+        vals = [_collect(results, ut) for _, results in groups]
+        means = np.array([np.mean(v) for v in vals])
+        variances = np.array([np.var(v) for v in vals])
+        axes[idx].plot(x, means, marker="o", label="Mean")
+        axes[idx].fill_between(x, means - variances, means + variances, alpha=0.4, label="Variance")
+        axes[idx].set_xticks(x)
+        axes[idx].set_xticklabels(labels, rotation=45, ha="right")
+        axes[idx].legend()
+        axes[idx].set_title(ut)
+    plt.tight_layout(rect=[0, 0.04, 1, 1])
+    fig.suptitle(plot_title, y=0.03)
+    return fig
+
+
+def roc_simple(id_scores, ood_scores, plot_title: str = "ROC Curve"):
+    """ROC curve for a single pair of id / ood score arrays (or tensors)."""
+    if isinstance(id_scores, torch.Tensor):
+        id_scores = id_scores.detach().cpu().numpy()
+    if isinstance(ood_scores, torch.Tensor):
+        ood_scores = ood_scores.detach().cpu().numpy()
+    true_labels = np.concatenate([np.zeros_like(id_scores), np.ones_like(ood_scores)])
+    scores = np.concatenate([id_scores, ood_scores])
+    fpr, tpr, _ = roc_curve(true_labels, scores)
+    auroc = roc_auc_score(true_labels, scores)
+    fig, ax = plt.subplots()
+    ax.plot(fpr, tpr, label=f"AUROC={auroc:.3f}")
+    ax.plot([0, 1], [0, 1], "--", color="gray")
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.legend()
+    ax.set_title(plot_title.replace("_", " "))
+    return fig
+
+
 def entropy(id: torch.tensor, ood: dict, kde=True):
     res = pd.DataFrame()
     if id is not None:
