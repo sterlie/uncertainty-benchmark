@@ -33,15 +33,6 @@ uncertainty-benchmark/
 
 Configuration is managed with [Hydra](https://hydra.cc). The root `config/config.yaml` composes
 one config group entry from each of `dataset/`, `experiment/`, `method/`, `model/`, and `optimizer/`.
-Any value can be overridden on the command line:
-
-```bash
-# override individual keys
-python -m src.experiments.run_experiment dataset=isic experiment=isic_drop method=mc_dropout
-
-# or via the Makefile shortcuts
-make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=mc_dropout
-```
 
 ## Experiment Types
 
