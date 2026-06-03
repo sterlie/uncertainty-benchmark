@@ -15,6 +15,6 @@ seaborn
 scikit-image
 swa_gaussian==0.1.9
 sympy
-torch==2.10.0
-torchvision==0.25.0
+torch
+torchvision
 tqdm
