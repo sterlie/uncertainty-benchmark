@@ -86,7 +86,7 @@ pip install -e swa_gaussian/
 List all registered UQ methods:
 
 ```bash
-make list-methods
+ç
 ```
 
 The available methods are:
@@ -98,13 +98,9 @@ The available methods are:
 | Test-Time Augmentation | `TTA` |
 | Deep Deterministic Uncertainty | `ddu` |
 | Deep Ensemble | `ensemble` |
-| Repulsive Ensemble | `repulsive_ensemble` |
 | Heteroscedastic XL | `het_xl` |
-| Evidential Deep Learning | `evidential_dl` |
 | Laplace Approximation | `laplace_approximation` |
 | SWAG | `swag` |
-| Influence Function | `influence_function` |
-| QUAM | `quam` |
 
 Pass `method=all_methods` to run all of the above sequentially in a single invocation.
 
@@ -121,7 +117,7 @@ Experiments are organised by dataset:
 | Dataset | Experiment key | Description |
 |---|---|---|
 | ISIC | `isic_drop` | Dermatoscope dropout artefact |
-| ISIC | `isic_hair` | Hair occlusion |
+| ISIC | `isic_hair` | Hair artefact |
 | ISIC | `isic_ink` | Ink marker artefact |
 | ISIC | `isic_age` | Patient age shift |
 | ISIC | `isic_skin_tone` | Skin tone shift |
@@ -194,3 +190,4 @@ make run-chexpert EXPERIMENT=chexpert_gender ARGS="experiment.lr=1e-4"
 ## Licence
 
 ## Contact
+pw
