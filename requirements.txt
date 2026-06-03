@@ -12,9 +12,9 @@ Pillow==11.3.0
 pytorch_lightning==2.6.0
 scikit_learn
 seaborn
-scikit-image==0.26.0
+scikit-image
 swa_gaussian==0.1.9
 sympy
 torch==2.10.0
 torchvision==0.25.0
-tqdm==4.67.3
+tqdm
