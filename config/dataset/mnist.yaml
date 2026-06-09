@@ -3,5 +3,5 @@ batch_size: 100
 input_dim: 784
 num_classes: 10
 
-train_subset: null  # set an int for quick runs, e.g. 5000
+train_subset: null 
 test_subset: null
