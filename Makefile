@@ -10,7 +10,7 @@ MODEL        ?= mlp
 TRAIN_SUBSET ?= null
 TEST_SUBSET  ?= null
 METHOD       ?= tta
-OPTIMIZER    ?= sgd_derma8u
+OPTIMIZER    ?= sgd_derma
 
 # ── Utilities ─────────────────────────────────────────────────────────────
 list-methods:
