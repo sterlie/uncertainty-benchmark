@@ -240,13 +240,18 @@ class Swag(Method):
         self.train_loader = train_loader
         model_name = self.config.model.name
         dataset_name = self.config.dataset.name
-        path = (
-            Path(os.getcwd())
-            / "models"
-            / dataset_name
-            / self.model_dir
-            / "checkpoints"
-            / f"swag_model_{model_name}.pt"
+        try:
+            from hydra.core.hydra_config import HydraConfig
+            project_root = Path(HydraConfig.get().runtime.cwd)
+        except Exception:
+            project_root = Path(os.getcwd())
+            path = (
+                project_root
+                / "models"
+                / dataset_name
+                / self.model_dir
+                / "checkpoints"
+                / f"swag_model_{model_name}.pt"
         )
         if path.exists():
             self.swag_model.load_state_dict(
@@ -346,10 +351,6 @@ class Swag(Method):
         """SWAG trains the base model internally — no separate pre-train step."""
         self.train_loader = train_loader
         self.train_uncertainty_method(train_loader, val_loader)
-
-    def train_base_model(self, train_loader, val_loader, loss_weight=None):
-        # SWAG trains the base model inside train_uncertainty_method; skip the base class loop.
-        return
 
     def save_model(self, path: str) -> None:
         """Save base model checkpoint and SWAG posterior state alongside it."""

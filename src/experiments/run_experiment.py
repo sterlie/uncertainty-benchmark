@@ -237,7 +237,8 @@ def main(cfg: DictConfig) -> None:
         method_cfg = MethodFactory.load_method_config(cfg, method_name)
         method = MethodFactory.create(method_cfg)
 
-        model_dir = Path("models") / dataset_name / method_name
+        project_root = Path(HydraConfig.get().runtime.cwd)
+        model_dir = project_root / "models" / dataset_name / method_name
         hydra_out = Path(HydraConfig.get().runtime.output_dir)
         result_dir = hydra_out / method_name
         # Mirror results path under plots/: plots/YYYY-MM-DD/experiment_name/HH-MM-SS/method_name
