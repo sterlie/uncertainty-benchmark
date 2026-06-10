@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -130,6 +132,10 @@ class HetXL(Method):
         best_acc = 0.0
         best_previous_loss = float('inf')
         epochs = self.config.optimizer.get('epochs', 10)
+        dataset_name = self.config.dataset.name
+        model_name = self.config.model.name
+        _best_ckpt = Path(os.getcwd()) / "models" / dataset_name / "het_xl" / f"best_model_{model_name}.pt"
+        _best_ckpt.parent.mkdir(parents=True, exist_ok=True)
         print("Any trainable params:",
               any(p.requires_grad for p in self.model.parameters()))
         for epoch in range(epochs):
@@ -173,10 +179,14 @@ class HetXL(Method):
 
             if val_acc > best_acc:
                 best_acc = val_acc
-                torch.save(self.model.state_dict(), f'best_model.pt')
+                torch.save(self.model.state_dict(), _best_ckpt)
 
             print(
                 f'Epoch {epoch + 1}/{epochs} - Train: Loss: {avg_loss:.4f}, Accuracy: {total_correct / len(train_loader.dataset):.4f}\nValidation: Loss {avg_val_loss:.4f}, Accuracy: {val_acc:.4f}')
+
+        if _best_ckpt.exists():
+            self.model.load_state_dict(torch.load(_best_ckpt, map_location=self.device, weights_only=True))
+            _best_ckpt.unlink()
 
         return self.model
 

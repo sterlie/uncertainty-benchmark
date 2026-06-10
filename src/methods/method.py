@@ -109,6 +109,11 @@ class Method(ABC):
         epochs = self.config.optimizer.get('epochs', 10)
         print("Any trainable params:", any(p.requires_grad for p in self.model.parameters()))
 
+
+        patience = self.config.optimizer.get('early_stopping_patience', None)
+        min_delta = self.config.optimizer.get('early_stopping_min_delta', 0.0)
+        patience_counter = 0
+        
         for epoch in range(epochs):
             self.model.train()
             train_loss = 0
@@ -161,9 +166,17 @@ class Method(ABC):
 
             print(f'Epoch {epoch+1}/{epochs} - Train: Loss: {train_loss:.4f}, Accuracy: {total_correct / total_labels:.4f}\nValidation: Loss {val_loss:.4f}, Accuracy: {val_acc:.4f}')
 
-            if val_loss < best_previous_loss:
-                best_previous_loss = val_loss
-                best_acc = val_acc
+
+            # inside epoch loop, after computing val_loss:
+            if patience is not None:
+                if best_previous_loss - val_loss > min_delta:
+                    best_previous_loss = val_loss
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+                    if patience_counter >= patience:
+                        print(f"Early stopping at epoch {epoch+1}")
+                        break
 
     def inference(self, loader: torch.utils.data.DataLoader):
         """Run deterministic inference and return class probabilities and labels."""

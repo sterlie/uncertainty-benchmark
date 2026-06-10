@@ -1,0 +1,9 @@
+name: "SGD_derma"
+lr: 0.01
+weight_decay: 0.0
+momentum: 0.9
+epochs: 10
+
+early_stopping_patience: 10    
+early_stopping_min_delta: 0.001  
+early_stopping_monitor: val_loss  

@@ -239,8 +239,11 @@ class Swag(Method):
     def train_uncertainty_method(self, train_loader, val_loader):
         self.train_loader = train_loader
         model_name = self.config.model.name
+        dataset_name = self.config.dataset.name
         path = (
             Path(os.getcwd())
+            / "models"
+            / dataset_name
             / self.model_dir
             / "checkpoints"
             / f"swag_model_{model_name}.pt"

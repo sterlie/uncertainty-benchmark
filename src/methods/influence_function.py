@@ -10,7 +10,7 @@ from src.methods.method import Method
 
 
 
-@register_method("influence_function")
+#@register_method("influence_function")
 class InfluenceFunction(Method):
     def __init__(self, config):
         super(InfluenceFunction, self).__init__(config)

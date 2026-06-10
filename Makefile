@@ -10,6 +10,7 @@ MODEL        ?= mlp
 TRAIN_SUBSET ?= null
 TEST_SUBSET  ?= null
 METHOD       ?= tta
+OPTIMIZER    ?= sgd_derma8u
 
 # ── Utilities ─────────────────────────────────────────────────────────────
 list-methods:
@@ -45,6 +46,7 @@ run-isic:
 		experiment=$(EXPERIMENT) \
 		model=$(MODEL) \
 		method=$(METHOD) \
+		optimizer=$(OPTIMIZER) \
 		dataset.train_subset=$(TRAIN_SUBSET) \
 		dataset.test_subset=$(TEST_SUBSET) \
 		$(ARGS)
@@ -55,6 +57,7 @@ run-mnist:
 		experiment=$(EXPERIMENT) \
 		model=$(MODEL) \
 		method=$(METHOD) \
+		optimizer=$(OPTIMIZER) \
 		dataset.train_subset=$(TRAIN_SUBSET) \
 		dataset.test_subset=$(TEST_SUBSET) \
 		$(ARGS)
@@ -73,6 +76,7 @@ run-chexpert:
 		experiment=$(EXPERIMENT) \
 		model=$(MODEL) \
 		method=$(METHOD) \
+		optimizer=$(OPTIMIZER) \
 		dataset.train_subset=$(TRAIN_SUBSET) \
 		dataset.test_subset=$(TEST_SUBSET) \
 		$(ARGS)
@@ -82,6 +86,7 @@ run-nih:
 		dataset=nih \
 		experiment=$(EXPERIMENT) \
 		model=$(MODEL) \
+		optimizer=$(OPTIMIZER) \
 		method=$(METHOD) \
 		dataset.train_subset=$(TRAIN_SUBSET) \
 		dataset.test_subset=$(TEST_SUBSET) \
@@ -93,6 +98,7 @@ run-vin:
 		experiment=$(EXPERIMENT) \
 		model=$(MODEL) \
 		method=$(METHOD) \
+		optimizer=$(OPTIMIZER) \
 		dataset.train_subset=$(TRAIN_SUBSET) \
 		dataset.test_subset=$(TEST_SUBSET) \
 		$(ARGS)

@@ -142,7 +142,7 @@ Experiments are organised by dataset:
 **Generic entry point** — works for any dataset/experiment combination:
 
 ```bash
-make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=mc_dropout
+make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=mc_dropout 
 make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=all_methods  # run all methods
 ```
 
@@ -150,23 +150,23 @@ make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=all_methods  # run 
 
 ```bash
 # ISIC examples (full dataset)
-make run-isic  EXPERIMENT=isic_drop      MODEL=mlp METHOD=all_methods
-make run-isic  EXPERIMENT=isic_hair      MODEL=mlp METHOD=mc_dropout
-make run-isic  EXPERIMENT=isic_ink       MODEL=mlp METHOD=entropy
-make run-isic  EXPERIMENT=isic_age       MODEL=mlp METHOD=all_methods
+make run-isic  EXPERIMENT=isic_drop      MODEL=EfficientNet       METHOD=all_methods
+make run-isic  EXPERIMENT=isic_hair      MODEL=EfficientNet       METHOD=mc_dropout
+make run-isic  EXPERIMENT=isic_ink       MODEL=EfficientNet       METHOD=entropy
+make run-isic  EXPERIMENT=isic_age       MODEL=EfficientNet       METHOD=all_methods
 
 # MNIST examples (full dataset)
-make run-mnist EXPERIMENT=mnist_blur     MODEL=mlp METHOD=all_methods
-make run-mnist EXPERIMENT=mnist_fracture MODEL=mlp METHOD=entropy
-make run-mnist EXPERIMENT=mnist_thinning MODEL=mlp METHOD=mc_dropout
+make run-mnist EXPERIMENT=mnist_blur     MODEL=mlp METHOD=all_methods   OPTIMIZER=sgd
+make run-mnist EXPERIMENT=mnist_fracture MODEL=mlp METHOD=all_methods   OPTIMIZER=sgd
+make run-mnist EXPERIMENT=mnist_thinning MODEL=mlp METHOD=mc_dropout    OPTIMIZER=sgd
 
 # CheXpert / NIH / VinDr examples (full dataset)
-make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=all_methods
-make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=ddu
-make run-nih      EXPERIMENT=nih_age         MODEL=DenseNet METHOD=mc_dropout
-make run-vin      EXPERIMENT=vin_amb         MODEL=DenseNet METHOD=entropy
+make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=all_methods  OPTIMIZER=adam
+make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=ddu          OPTIMIZER=adam
+make run-nih      EXPERIMENT=nih_age         MODEL=DenseNet METHOD=mc_dropout   OPTIMIZER=adam
+make run-vin      EXPERIMENT=vin_amb         MODEL=DenseNet METHOD=entropy      OPTIMIZER=adam
 
-# Use a subset for quick iteration
+# Run om a subset for quick iteration
 make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=ddu TRAIN_SUBSET=100 TEST_SUBSET=50
 ```
 

@@ -1,7 +1,6 @@
 import torch
 from src.methods import Method, register_method
 import torch.nn.functional as F
-import numpy as np
 
 def kl_divergence(alpha, num_classes):
     ones = torch.ones([1, num_classes], dtype=torch.float32)
@@ -54,7 +53,7 @@ def one_hot_embedding(labels, num_classes=10):
     y = torch.eye(num_classes)
     return y[labels]
 
-@register_method("evidential_dl")
+#@register_method("evidential_dl")
 class EvidentialDeepLearning(Method):
     def __init__(self, config):
         super(EvidentialDeepLearning, self).__init__(config)
@@ -177,19 +176,34 @@ class EvidentialDeepLearning(Method):
 
     def measure_uncertainty(self, loader: torch.utils.data.DataLoader):
         self.model.eval()
-        total_uncertainty = []
-        for inputs, _ in loader:
-            inputs = inputs.to(self.device)
-            output = self.model(inputs)
-            evidence = relu_evidence(output)
-            alpha = evidence + 1
-            uncertainty = self.num_classes / torch.sum(alpha, dim=1, keepdim=True)
-            total_uncertainty.append(uncertainty.mean().item())
+        all_predictions = []
+        all_targets = []
+        all_uncertainty = []
+        with torch.no_grad():
+            for inputs, targets in loader:
+                inputs = inputs.to(self.device)
+                output = self.model(inputs)
+                evidence = relu_evidence(output)
+                alpha = evidence + 1
+                S = torch.sum(alpha, dim=1, keepdim=True)
+                prob = alpha / S
+                # vacuity uncertainty: K / S, one scalar per sample
+                uncertainty = (self.num_classes / S).squeeze(1)  # [B]
+                all_predictions.append(prob.cpu())
+                all_targets.append(targets.cpu() if isinstance(targets, torch.Tensor) else torch.tensor(targets))
+                all_uncertainty.append(uncertainty.cpu())
+
+        predictions = torch.cat(all_predictions, dim=0)   # [N, C]
+        ground_truth = torch.cat(all_targets, dim=0)      # [N] or [N, C]
+        total_uncertainty = torch.cat(all_uncertainty, dim=0)  # [N]
 
         return {
-            "total_uncertainty": np.array(total_uncertainty),
-            "aleatoric_uncertainty": [0] * len(total_uncertainty),
-            "epistemic_uncertainty": [0] * len(total_uncertainty),
-            "out_of_distribution": [0] * len(total_uncertainty),
+            "predictions": predictions,
+            "predicted_labels": predictions.argmax(dim=-1),
+            "ground_truth": ground_truth,
+            "total_uncertainty": total_uncertainty,
+            "aleatoric_uncertainty": total_uncertainty,
+            "epistemic_uncertainty": torch.zeros_like(total_uncertainty),
+            "out_of_distribution": total_uncertainty,
         }
 

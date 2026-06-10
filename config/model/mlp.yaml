@@ -4,4 +4,3 @@ num_layers: 3
 dropout: 0.5
 activation: "ReLU"
 normalization: "BatchNorm"
-
