@@ -49,8 +49,14 @@ class Method(ABC):
         output_cfg = getattr(self.config, "output", None)
         if output_cfg is not None and "base_model_path" in output_cfg:
             return Path(str(output_cfg.base_model_path))
+        try:
+            from hydra.core.hydra_config import HydraConfig
+            project_root = Path(HydraConfig.get().runtime.cwd)
+        except Exception:
+            project_root = Path(os.getcwd())
+        dataset_name = str(getattr(getattr(self.config, "dataset", {}), "name", "default"))
         method_name = str(getattr(getattr(self.config, "method", {}), "name", "default"))
-        return Path("models") / method_name
+        return project_root / "models" / dataset_name / method_name
 
     def save_pretrained_model(self, pretrained):
         print(pretrained)
