@@ -167,7 +167,7 @@ make run-nih      EXPERIMENT=nih_age         MODEL=DenseNet METHOD=mc_dropout   
 make run-vin      EXPERIMENT=vin_amb         MODEL=DenseNet METHOD=entropy      OPTIMIZER=adam
 
 # Run om a subset for quick iteration
-make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=ddu TRAIN_SUBSET=100 TEST_SUBSET=50
+make run-isic EXPERIMENT=isic_hair MODEL=EfficientNet METHOD=mc_dropout TRAIN_SUBSET=100 TEST_SUBSET=50
 ```
 
 **Key overridable parameters:**

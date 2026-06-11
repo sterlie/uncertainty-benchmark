@@ -30,19 +30,20 @@ class Method(ABC):
     def init_optimizer(self):
         """Initialize the optimizer. Must be implemented by child classes."""
         optimizer_name = str(self.config.optimizer.name).lower()
-        if optimizer_name == "sgd":
-            optimizer_class = torch.optim.SGD
-        elif optimizer_name == "adam":
-            optimizer_class = torch.optim.Adam
-        else:
-            raise ValueError(f"Unknown optimizer: {self.config.optimizer.name}")
-        arguments = OmegaConf.to_container(self.config.optimizer)
-        arguments.pop("name", None)
-        arguments.pop("epochs", None)
-        self.optimizer = optimizer_class(
-            self.model.parameters(),
-            **arguments,
-        )
+        cfg = self.config.optimizer
+        if optimizer_name.startswith("sgd"):
+            self.optimizer =  torch.optim.SGD(
+                self.model.parameters(),
+                lr=cfg.lr,
+                momentum=cfg.get("momentum", 0.0),
+                weight_decay=cfg.get("weight_decay", 0.0),
+            )
+        elif optimizer_name.startswith("adam"):
+            self.optimizer =  torch.optim.Adam(
+                self.model.parameters(),
+                lr=cfg.lr,
+                weight_decay=cfg.get("weight_decay", 0.0),
+            )
 
     def _base_model_dir(self) -> Path:
         output_cfg = getattr(self.config, "output", None)
