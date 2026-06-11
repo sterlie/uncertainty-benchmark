@@ -64,9 +64,10 @@ class HetXL(Method):
 
     def init_optimizer(self):
         """Initialize the optimizer. Must be implemented by child classes."""
-        if self.config.optimizer.name == "SGD":
+        optimizer_name = str(self.config.optimizer.name).lower()
+        if optimizer_name.startswith("sgd"):
             optimizer_class = torch.optim.SGD
-        elif self.config.optimizer.name == "Adam":
+        elif optimizer_name.startswith("adam"):
             optimizer_class = torch.optim.Adam
         else:
             raise ValueError(f"Unknown optimizer: {self.config.optimizer.name}")
@@ -74,6 +75,9 @@ class HetXL(Method):
         arguments.pop("name")
         arguments.pop("epochs")
         scheduler_arguments = arguments.pop("scheduler", None)
+        arguments.pop("early_stopping_patience", None)
+        arguments.pop("early_stopping_min_delta", None)
+        arguments.pop("early_stopping_monitor", None)
         self.optimizer = optimizer_class(
             [{"params": self.model.parameters()}, {"params": self._low_rank_cov_layer.parameters()}, {"params": self._diagonal_std_layer.parameters()}],
             **arguments,

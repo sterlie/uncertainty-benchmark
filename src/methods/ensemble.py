@@ -36,15 +36,19 @@ class Ensemble(Method):
 
     def init_optimizer(self):
         """Initialize the optimizer. Must be implemented by child classes."""
-        if self.config.optimizer.name == "SGD":
+        optimizer_name = str(self.config.optimizer.name).lower()
+        if optimizer_name.startswith("sgd"):
             optimizer_class = torch.optim.SGD
-        elif self.config.optimizer.name == "Adam":
+        elif optimizer_name.startswith("adam"):
             optimizer_class = torch.optim.Adam
         else:
             raise ValueError(f"Unknown optimizer: {self.config.optimizer.name}")
         arguments = OmegaConf.to_container(self.config.optimizer)
         arguments.pop("name")
         arguments.pop("epochs")
+        arguments.pop("early_stopping_patience", None)
+        arguments.pop("early_stopping_min_delta", None)
+        arguments.pop("early_stopping_monitor", None)
         self.optimizer = [optimizer_class(
             model.parameters(),
             **arguments,
