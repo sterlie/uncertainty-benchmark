@@ -276,6 +276,7 @@ class Swag(Method):
             if (epoch + 1) > swa_start:
                 self.swag_model.collect_model(self.model)
                 self.swag_model.sample(scale=0.0, cov=True)
+                self.swag_model.to(self.device)
                 self.bn_update(train_loader, self.swag_model)
 
                 sgd_res = self.run_predictions(val_loader)
