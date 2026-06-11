@@ -14,7 +14,7 @@ class EfficientNet(Model):
         drop_rate = config.model.get('drop_rate', 0.5)
         hidden_dim = config.model.get('hidden_dim', 128)
         # Backbone
-        self.backbone = efficientnet_b0(eights=EfficientNet_B0_Weights.DEFAULT)
+        self.backbone = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
 
         # Classification head
         self.fc1 = nn.Linear(1000, hidden_dim)

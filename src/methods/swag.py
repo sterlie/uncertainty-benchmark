@@ -245,13 +245,13 @@ class Swag(Method):
             project_root = Path(HydraConfig.get().runtime.cwd)
         except Exception:
             project_root = Path(os.getcwd())
-            path = (
-                project_root
-                / "models"
-                / dataset_name
-                / self.model_dir
-                / "checkpoints"
-                / f"swag_model_{model_name}.pt"
+        path = (
+            project_root
+            / "models"
+            / dataset_name
+            / self.model_dir
+            / "checkpoints"
+            / f"swag_model_{model_name}.pt"
         )
         if path.exists():
             self.swag_model.load_state_dict(
