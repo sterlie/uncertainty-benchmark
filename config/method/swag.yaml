@@ -1,6 +1,6 @@
 name: swag
 swa_start: 0
 
-epochs: 10
+epochs: 15
 sample_size: 10
 lr_increase_factor: 2

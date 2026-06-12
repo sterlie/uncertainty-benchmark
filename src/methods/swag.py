@@ -52,7 +52,7 @@ class Swag(Method):
         scheduler_arguments = arguments.pop("scheduler", None)
         self.optimizer = torch.optim.SGD(
             self.model.parameters(),
-            lr=arguments["lr"] * 100,
+            lr=arguments["lr"] * self.config.lr_increase_factor,
             weight_decay=arguments.get("weight_decay", 0.0),
             momentum=arguments.get("momentum", 0.9),
         )
