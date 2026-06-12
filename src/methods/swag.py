@@ -139,8 +139,8 @@ class Swag(Method):
         with torch.no_grad():
             for inputs, targets, *_ in test_loader:
                 preds = self.predict(inputs)
-                all_predictions.append(preds.cpu())
-                all_targets.append(targets)
+                all_predictions.append(preds)
+                all_targets.append(targets.to(self.device))
         return {
             "predictions": torch.cat(all_predictions, dim=0),
             "targets": torch.cat(all_targets, dim=0),
@@ -312,9 +312,9 @@ class Swag(Method):
         n_samples = self.config.method.sample_size
         n_data = len(loader.dataset)
 
-        predictions = torch.zeros((n_samples, n_data, self.num_classes))
+        predictions = torch.zeros((n_samples, n_data, self.num_classes)).to(self.device)
         if self.is_multilabel:
-            labels = torch.zeros(n_data, self.num_classes)
+            labels = torch.zeros(n_data, self.num_classes).to(self.device)
         else:
             labels = torch.zeros(n_data)
 
@@ -327,6 +327,7 @@ class Swag(Method):
 
         for i in range(n_samples):
             self.swag_model.sample(scale=self.scale, cov=True)
+            self.swag_model.to(self.device)
             self.bn_update(sub_loader, self.swag_model)
             self.swag_model.eval()
             torch.manual_seed(i)
@@ -337,9 +338,9 @@ class Swag(Method):
                     targets = batch[1]
                     output = self.swag_model(inputs)
                     probs = torch.sigmoid(output) if self.is_multilabel else F.softmax(output, dim=1)
-                    predictions[i, k:k + inputs.size(0)] = probs.cpu()
+                    predictions[i, k:k + inputs.size(0)] = probs
                     if i == 0:
-                        labels[k:k + inputs.size(0)] = targets
+                        labels[k:k + inputs.size(0)] = targets.to(self.device)
                     k += inputs.size(0)
 
         return predictions, labels
