@@ -34,6 +34,17 @@ class Swag(Method):
         self.model_dir = "swag"
         self.eps = 1e-12
 
+    def _sample_to_device(self):
+        """Move SWAG sampled weight attributes to self.device.
+
+        SWAG.sample_fullrank sets weights via module.__setattr__(name, cpu_tensor),
+        bypassing nn.Parameter registration, so .to(device) alone does not move them.
+        """
+        for module, name in self.swag_model.params:
+            w = getattr(module, name, None)
+            if w is not None and isinstance(w, torch.Tensor):
+                setattr(module, name, w.to(self.device))
+
     def init_optimizer(self):
         arguments = OmegaConf.to_container(self.config.optimizer)
         arguments.pop("name", None)
@@ -276,7 +287,7 @@ class Swag(Method):
             if (epoch + 1) > swa_start:
                 self.swag_model.collect_model(self.model)
                 self.swag_model.sample(scale=0.0, cov=True)
-                self.swag_model.to(self.device)
+                self._sample_to_device()
                 self.bn_update(train_loader, self.swag_model)
 
                 sgd_res = self.run_predictions(val_loader)
@@ -327,7 +338,7 @@ class Swag(Method):
 
         for i in range(n_samples):
             self.swag_model.sample(scale=self.scale, cov=True)
-            self.swag_model.to(self.device)
+            self._sample_to_device()
             self.bn_update(sub_loader, self.swag_model)
             self.swag_model.eval()
             torch.manual_seed(i)
