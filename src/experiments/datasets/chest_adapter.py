@@ -26,6 +26,7 @@ from src.datasets.chest import (
     _extract_chexpert_patient_id,
     _resolve_chexpert_path,
     _resolve_nih_path,
+    build_nih_path_resolver,
 )
 from src.experiments.datasets.base import DatasetExperimentAdapter, LoaderBundle, subset_df
 
@@ -198,6 +199,14 @@ def _read_dataset_table(cfg: DictConfig) -> pd.DataFrame:
     sex_col = cfg.dataset.get("sex_col", defaults["sex_col"])
     age_col = cfg.dataset.get("age_col", defaults["age_col"])
 
+    # For NIH, build a resolver that handles both the flat layout and the
+    # multi-subfolder layout (images_001 – images_012) used by the full dataset.
+    dataset_name = str(cfg.dataset.name).lower()
+    if dataset_name == "nih":
+        path_resolver = build_nih_path_resolver(images_dir)
+    else:
+        path_resolver = defaults["path_resolver"]
+
     return prepare_chest_table(
         metadata_csv=metadata_csv,
         images_dir=images_dir,
@@ -209,7 +218,7 @@ def _read_dataset_table(cfg: DictConfig) -> pd.DataFrame:
         frontal_lateral_filter=frontal_lateral_filter,
         all_classes=all_classes,
         selected_classes=selected_classes,
-        path_resolver=defaults["path_resolver"],
+        path_resolver=path_resolver,
         patient_id_extractor=defaults["patient_id_extractor"],
         df_preprocessor=defaults.get("df_preprocessor"),
     )

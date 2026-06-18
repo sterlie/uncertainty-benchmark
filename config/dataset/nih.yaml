@@ -11,7 +11,7 @@ test_subset: null
 
 data_root: ${data.root}/nih
 images_dir: ${dataset.data_root}/images
-metadata_csv: ${dataset.data_root}/metadata.csv
+metadata_csv: ${dataset.data_root}/Data_Entry_2017.csv
 
 multilabel: true
 

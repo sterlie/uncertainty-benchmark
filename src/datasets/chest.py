@@ -122,6 +122,35 @@ def _resolve_nih_path(csv_path: str, images_dir: str) -> str:
     return os.path.join(images_dir, csv_path)
 
 
+def build_nih_path_resolver(images_dir: str) -> Callable[[str, str], str]:
+    """Return a path resolver for NIH images that handles both flat and
+    subfolder layouts (e.g. images_001 – images_012).
+    """
+    
+    lookup: dict = {}
+    try:
+        subdirs = [e for e in os.scandir(images_dir) if e.is_dir()]
+    except OSError:
+        subdirs = []
+
+    for subdir in subdirs:
+        try:
+            for entry in os.scandir(subdir.path):
+                if entry.is_file():
+                    lookup[entry.name] = entry.path
+        except OSError:
+            pass
+
+    if lookup:
+        def _resolver(csv_path: str, _images_dir: str) -> str:
+            basename = os.path.basename(csv_path)
+            return lookup.get(basename, os.path.join(_images_dir, csv_path))
+        return _resolver
+
+    # No subdirectories found – use the original flat resolver.
+    return _resolve_nih_path
+
+
 def prepare_chest_table(
     metadata_csv: str,
     images_dir: str,
