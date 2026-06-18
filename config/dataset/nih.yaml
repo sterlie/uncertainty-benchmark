@@ -10,7 +10,7 @@ train_subset: null
 test_subset: null
 
 data_root: /work3/sarste/NIH
-images_dir: ${dataset.data_root}/images
+images_dir: ${dataset.data_root}
 metadata_csv: ${dataset.data_root}/Data_Entry_2017.csv
 
 multilabel: true

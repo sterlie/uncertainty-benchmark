@@ -123,31 +123,35 @@ def _resolve_nih_path(csv_path: str, images_dir: str) -> str:
 
 
 def build_nih_path_resolver(images_dir: str) -> Callable[[str, str], str]:
-    """Return a path resolver for NIH images that handles both flat and
-    subfolder layouts (e.g. images_001 – images_012).
+    """Return a path resolver for the full NIH dataset layout:
+        {images_dir}/images_NNN/images/{filename}.png
+
+    Scans all images_* subdirs once and builds a filename -> absolute path
+    lookup for O(1) resolution.
     """
-    
     lookup: dict = {}
     try:
-        subdirs = [e for e in os.scandir(images_dir) if e.is_dir()]
+        for top in os.scandir(images_dir):
+            if not top.is_dir():
+                continue
+            inner = os.path.join(top.path, "images")
+            if not os.path.isdir(inner):
+                continue
+            try:
+                for entry in os.scandir(inner):
+                    if entry.is_file():
+                        lookup[entry.name] = entry.path
+            except OSError:
+                pass
     except OSError:
-        subdirs = []
-
-    for subdir in subdirs:
-        try:
-            for entry in os.scandir(subdir.path):
-                if entry.is_file():
-                    lookup[entry.name] = entry.path
-        except OSError:
-            pass
+        pass
 
     if lookup:
         def _resolver(csv_path: str, _images_dir: str) -> str:
-            basename = os.path.basename(csv_path)
-            return lookup.get(basename, os.path.join(_images_dir, csv_path))
+            return lookup.get(os.path.basename(csv_path),
+                              os.path.join(_images_dir, csv_path))
         return _resolver
 
-    # No subdirectories found – use the original flat resolver.
     return _resolve_nih_path
 
 
