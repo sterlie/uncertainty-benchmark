@@ -161,13 +161,18 @@ make run-mnist EXPERIMENT=mnist_fracture MODEL=mlp METHOD=all_methods   OPTIMIZE
 make run-mnist EXPERIMENT=mnist_thinning MODEL=mlp METHOD=mc_dropout    OPTIMIZER=sgd
 
 # CheXpert / NIH / VinDr examples (full dataset)
-make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=all_methods  OPTIMIZER=adam
-make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=ddu          OPTIMIZER=adam
-make run-nih      EXPERIMENT=nih_age         MODEL=DenseNet METHOD=mc_dropout   OPTIMIZER=adam
+make run-chexpert   EXPERIMENT=chexpert_gender    MODEL=DenseNet      METHOD=all_methods  OPTIMIZER=adam
+make run-chexpert   EXPERIMENT=chexpert_age       MODEL=DenseNet      METHOD=all_methods  OPTIMIZER=adam
+make run-chexpert   EXPERIMENT=chexpert_disease   MODEL=DenseNet      METHOD=all_methods  OPTIMIZER=adam
+make run-chexpert   EXPERIMENT=chexpert_amb       MODEL=DenseNet      METHOD=all_methods  OPTIMIZER=adam
+make run-chexpert   EXPERIMENT=chexpert_plain     MODEL=DenseNet      METHOD=all_methods  OPTIMIZER=adam
+
+
+make run-nih      EXPERIMENT=nih_age         MODEL=DenseNet METHOD=mc_dropout   OPTIMIZER=adam TRAIN_SUBSET=50 TEST_SUBSET=10
 make run-vin      EXPERIMENT=vin_amb         MODEL=DenseNet METHOD=entropy      OPTIMIZER=adam
 
 # Run om a subset for quick iteration
-make run-isic EXPERIMENT=isic_hair MODEL=EfficientNet METHOD=mc_dropout TRAIN_SUBSET=100 TEST_SUBSET=50
+make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=mc_dropout  OPTIMIZER=adam TRAIN_SUBSET=50 TEST_SUBSET=10
 ```
 
 **Key overridable parameters:**
@@ -190,4 +195,3 @@ make run-chexpert EXPERIMENT=chexpert_gender ARGS="experiment.lr=1e-4"
 ## Licence
 
 ## Contact
-pw

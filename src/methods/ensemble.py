@@ -49,6 +49,7 @@ class Ensemble(Method):
         arguments.pop("early_stopping_patience", None)
         arguments.pop("early_stopping_min_delta", None)
         arguments.pop("early_stopping_monitor", None)
+        arguments.pop("scheduler", None)
         self.optimizer = [optimizer_class(
             model.parameters(),
             **arguments,

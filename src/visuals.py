@@ -270,6 +270,73 @@ def plot_ood_auroc(experiment, u_type='total_uncertainty', save=True):
         _save(fig, f'ood_auroc_{experiment}_{u_type}.pdf')
     plt.show()
 
+# ── Plot 3b: OOD-detection AUROC with ID baseline as first point ──────────────
+def plot_ood_auroc_with_id_baseline(experiment, u_type='total_uncertainty', save=True):
+    """Same as plot_ood_auroc but prepends the valid set as the first x-axis point.
+
+    The 'valid' point is computed by splitting the ID scores in half: the first
+    half is treated as in-distribution (label=0) and the second half as the
+    'OOD' set (label=1).  Because both halves come from the same distribution
+    this gives an AUROC ≈ 0.5, providing a clean baseline before any real
+    distribution shift is introduced.
+    """
+    if experiment not in results:
+        print(f'{experiment} not available'); return
+    rd        = results[experiment]
+    order     = ['valid'] + list(ORDERS[experiment])
+    xlabel    = XLABELS[experiment]
+    m_list    = methods.get(u_type, methods['total_uncertainty'])
+    available = [m for m in m_list if (rd / m).is_dir()]
+
+    fig, ax = plt.subplots(figsize=(max(8, len(order) * 0.7), 5))
+    fig.suptitle(f'{experiment}  —  OOD AUROC  ({u_type.replace("_", " ")})', fontsize=13)
+
+    for method in available:
+        id_path = rd / method / 'valid_uncertainties.pkl'
+        if not id_path.exists():
+            continue
+        id_d = load_pkl(id_path)
+        if u_type not in id_d:
+            continue
+        id_scores = _to_np(id_d[u_type])
+
+        # baseline point: first half as ID, second half as "OOD"
+        mid = len(id_scores) // 2
+        baseline_labels = np.concatenate([np.zeros(mid), np.ones(len(id_scores) - mid)])
+        baseline_scores = id_scores
+        try:
+            baseline_auroc = roc_auc_score(baseline_labels, baseline_scores)
+        except Exception:
+            baseline_auroc = np.nan
+
+        aurocs = [baseline_auroc]
+        for lv in ORDERS[experiment]:
+            p = rd / method / f'ood_uncertainty_{lv}.pkl'
+            if not p.exists():
+                aurocs.append(np.nan); continue
+            ood_d = load_pkl(p)
+            if u_type not in ood_d:
+                aurocs.append(np.nan); continue
+            ood_scores = _to_np(ood_d[u_type])
+            labels = np.concatenate([np.zeros(len(id_scores)), np.ones(len(ood_scores))])
+            scores = np.concatenate([id_scores, ood_scores])
+            try:
+                aurocs.append(roc_auc_score(labels, scores))
+            except Exception:
+                aurocs.append(np.nan)
+
+        label = legend_map.get(method, method)
+        ax.plot(order, aurocs, label=label, color=palette_dict.get(label), linewidth=1.5, marker='o', markersize=4)
+
+    ax.axvline(x=0, color='grey', linestyle='--', linewidth=0.8, alpha=0.6)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('AUROC')
+    ax.tick_params(axis='x', rotation=45)
+    ax.legend(title='Method', bbox_to_anchor=(1.01, 1), loc='upper left', fontsize=9)
+    plt.tight_layout()
+    if save:
+        _save(fig, f'ood_auroc_with_baseline_{experiment}_{u_type}.pdf')
+    plt.show()
 
 # ── Plot 4: Misclassification detection AUROC bar chart ──────────────────────
 def plot_misclassification_auroc(experiment, save=True):
