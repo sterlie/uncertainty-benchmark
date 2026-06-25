@@ -3,5 +3,5 @@ epochs: 3
 lr: 0.001
 weight_decay: 0.0
 normalize: true
-distortion_pattern: by_age
-population_division: by_age
+distortion_pattern: by_age_fine
+population_division: by_age_fine
