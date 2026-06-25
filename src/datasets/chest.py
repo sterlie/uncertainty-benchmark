@@ -259,6 +259,7 @@ def build_chest_subgroup_slices(
     age_lower: int = 50,
     age_upper: int = 70,
     disease_count_threshold: int = 1,
+    age_bin_size: int = 10,
 ) -> Dict[str, pd.DataFrame]:
     """Split a chest X-ray dataframe into subgroup-specific slices."""
     if subgroup == "by_gender":
@@ -276,6 +277,16 @@ def build_chest_subgroup_slices(
             for g in sorted(df["_age_group"].unique())
         }
 
+    if subgroup == "by_age_fine":
+        df = df.copy()
+        slices = {}
+        for bin_start in range(0, 100, age_bin_size):
+            bin_end = bin_start + age_bin_size
+            mask = (df["age"] >= bin_start) & (df["age"] < bin_end)
+            if mask.any():
+                slices[f"age_{bin_start}"] = df[mask].reset_index(drop=True)
+        return slices
+
     if subgroup == "by_disease_count":
         return {
             "low_disease": df[df["disease_count"] <= disease_count_threshold].reset_index(drop=True),
@@ -284,7 +295,7 @@ def build_chest_subgroup_slices(
 
     raise ValueError(
         f"Unknown subgroup '{subgroup}'. "
-        "Expected one of: by_gender, by_age, by_disease_count."
+        "Expected one of: by_gender, by_age, by_age_fine, by_disease_count."
     )
 
 

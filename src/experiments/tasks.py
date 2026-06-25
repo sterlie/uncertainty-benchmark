@@ -24,6 +24,12 @@ from src.utils.visualization import plot_uncertainty_line_plot, roc_simple
 _OOD_UNCERTAINTY_KEYS = ("total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty")
 
 
+def _to_numpy(v) -> np.ndarray:
+    arr = v.detach().cpu().numpy() if isinstance(v, torch.Tensor) else np.asarray(v)
+    return arr.mean(axis=-1) if arr.ndim == 2 else arr
+
+
+
 def _concat_tensor_key(uncertainty_dict: dict, key: str) -> np.ndarray:
     v = uncertainty_dict[key]
     arr = v.detach().cpu().numpy() if isinstance(v, torch.Tensor) else np.asarray(v)
@@ -210,4 +216,147 @@ def run_ood_subgroup_task(
     with open(result_dir / "ood_subgroup_performance.json", "w") as f:
         json.dump(performance, f, indent=4)
     print(f"  Saved OOD subgroup results → {result_dir / 'ood_subgroup_performance.json'}")
+    return performance
+
+
+_EPS = 1e-10
+_UQ_KEYS = ("total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty")
+
+
+def _to_numpy(v) -> np.ndarray:
+    arr = v.detach().cpu().numpy() if isinstance(v, torch.Tensor) else np.asarray(v)
+    return arr.mean(axis=-1) if arr.ndim == 2 else arr
+
+
+def run_uncertainty_decomposition(
+    cfg,
+    method,
+    eval_loaders: Dict[str, DataLoader],
+    level_names: List[str],
+    expected_uq_type: str,
+    result_dir: Path,
+    plot_dir: Path,
+) -> Dict[str, object]:
+    """Compute sensitivity (TP / (TP + FN)) of uncertainty type attribution per severity level.
+
+    For each image, a correct attribution is:
+      - blur experiment     (expected_uq_key="aleatoric_uncertainty"):  aleatoric > epistemic
+      - fracture experiment (expected_uq_key="epistemic_uncertainty"):  epistemic > aleatoric
+
+    """
+    result_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    other_uq_type = (
+        "epistemic_uncertainty"
+        if expected_uq_type == "aleatoric_uncertainty"
+        else "aleatoric_uncertainty"
+    )
+    
+    # inference
+    uncertainties: Dict[str, dict] = {}
+    for name in level_names:
+        cache = result_dir / f"uncertainty_decomp_{name}.pkl"
+        if cache.exists():
+            with open(cache, "rb") as f:
+                uncertainties[name] = pickle.load(f)
+            print(f"  Loaded cached uncertainty for '{name}'")
+        else:
+            uncertainties[name] = method.measure_uncertainty(eval_loaders[name])
+            with open(cache, "wb") as f:
+                pickle.dump(uncertainties[name], f)
+            print(f"  Computed uncertainty for '{name}'")
+
+    # normalize scores
+    # Min-max normalize aleatoric and epistemic globally across all levels
+    # so scale differences don't dominate the aleatoric > epistemic comparison
+    for uq_key in ("aleatoric_uncertainty", "epistemic_uncertainty"):
+        all_vals = np.concatenate([
+            _to_numpy(uncertainties[name][uq_key]) for name in level_names
+        ])
+
+        mean = np.mean(all_vals)
+        std = np.std(all_vals)
+
+        for name in level_names:
+            arr = _to_numpy(uncertainties[name][uq_key])
+            uncertainties[name][uq_key] = (arr - mean) / (std + 1e-10)
+
+
+    # compute sensitivity on normalised uncertainty scores
+    performance: dict = {}
+    per_level_sensitivity: list = []
+
+
+    for name in level_names:
+        expected = _to_numpy(uncertainties[name][expected_uq_type])
+        other    = _to_numpy(uncertainties[name][other_uq_type])
+
+        tp = int(np.sum(expected > other))
+        fn = int(np.sum(expected <= other))
+
+        # log per-level sensitivity
+        sensitivity = tp / (tp + fn) if (tp + fn) > 0 else float("nan")
+        print(f'level={name}, sensitivity={sensitivity}')
+        per_level_sensitivity.append(sensitivity)
+        performance[f"sensitivity_{name}"] = sensitivity
+
+    # log over-all-levels sensitivity 
+    overall = float(np.nanmean(per_level_sensitivity))
+    performance["sensitivity_mean"] = overall
+    
+    # PLot sensitivity bar chart 
+    fig, ax = plt.subplots(figsize=(8, 4))
+    x = np.arange(len(level_names))
+    color = "steelblue" if "aleatoric" in expected_uq_type else "tomato"
+    ax.bar(x, per_level_sensitivity, color=color)
+    ax.axhline(0.5, color="black", linestyle="--", linewidth=1, label="chance")
+    ax.set_xticks(x)
+    ax.set_xticklabels(level_names, rotation=30, ha="right")
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel("Sensitivity  [TP / (TP + FN)]")
+    ax.set_title(
+        f"Uncertainty attribution sensitivity\n"
+        f"expected: {expected_uq_type} > {other_uq_type}  |  mean = {overall:.3f}"
+    )
+    ax.legend()
+    plt.tight_layout()
+    fig.savefig(plot_dir / "sensitivity.png")
+    plt.close(fig)
+
+    with open(result_dir / "sensitivity.json", "w") as f:
+        json.dump(performance, f, indent=4)
+    print(f"  Saved → {result_dir / 'sensitivity.json'}")
+
+
+    # Plot scatter: aleatoric vs epistemic per level
+    ncols = min(4, len(level_names))
+    nrows = int(np.ceil(len(level_names) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 4 * nrows), squeeze=False)
+
+    for idx, name in enumerate(level_names):
+        ax = axes[idx // ncols][idx % ncols]
+        al = _to_numpy(uncertainties[name]["aleatoric_uncertainty"])
+        ep = _to_numpy(uncertainties[name]["epistemic_uncertainty"])
+        #correct = (al > ep) if expected_uq_type == "aleatoric_uncertainty" else (ep > al)
+        ax.scatter(al,  ep,  alpha=0.4, s=8, color="steelblue")
+        #  ax.scatter(al[~correct], ep, alpha=0.4, s=8, color="tomato",    label=f"incorrect ({(~correct).sum()})")
+        lim = max(al.max(), ep.max())
+        ax.plot([0, al.max()], [0, ep.max()], "k--", linewidth=0.8, alpha=0.5)
+        ax.set_xlim(0, al.max())
+        ax.set_ylim(0,  ep.max())
+        ax.set_xlabel("Aleatoric")
+        ax.set_ylabel("Epistemic")
+        ax.set_title(f"{name}  |  sens={per_level_sensitivity[idx]:.2f}")
+        ax.legend(fontsize=7, markerscale=2)
+
+    for idx in range(len(level_names), nrows * ncols):   # hide empty cells
+        axes[idx // ncols][idx % ncols].set_visible(False)
+
+    fig.suptitle(f"Aleatoric vs Epistemic per level", y=1.01)
+    plt.tight_layout()
+    fig.savefig(plot_dir / "sensitivity_scatter.png", bbox_inches="tight")
+    plt.close(fig)
+
+
     return performance

@@ -421,11 +421,12 @@ def build_chest_loaders(cfg: DictConfig, distortion_pattern: str = "plain") -> L
     val_loader = _make_loader(val_df, cfg, shuffle=False,
                               population_division=alternate_population_division)
 
-    subgroup_patterns = {"by_gender", "by_age", "by_disease_count"}
+    subgroup_patterns = {"by_gender", "by_age", "by_age_fine", "by_disease_count"}
     pattern = str(distortion_pattern) if str(distortion_pattern) else "plain"
 
     age_lower = int(cfg.dataset.get("age_lower", 50))
     age_upper = int(cfg.dataset.get("age_upper", 70))
+    age_bin_size = int(cfg.dataset.get("age_bin_size", 10))
     disease_count_threshold = int(cfg.dataset.get("disease_count_threshold", defaults["disease_count_threshold"]))
 
     if pattern in subgroup_patterns:
@@ -433,6 +434,7 @@ def build_chest_loaders(cfg: DictConfig, distortion_pattern: str = "plain") -> L
             test_df, pattern,
             age_lower=age_lower, age_upper=age_upper,
             disease_count_threshold=disease_count_threshold,
+            age_bin_size=age_bin_size,
         )
         eval_loaders = {
             name: _make_loader(sub_df, cfg, shuffle=False,

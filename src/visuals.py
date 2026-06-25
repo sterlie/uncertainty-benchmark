@@ -36,6 +36,9 @@ ORDERS = {
     'mnist_blur':     ['plain', 'low_severity', 'mid_severity', 'high_severity'],
     'mnist_fracture': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
     'mnist_thinning': ['0.1', '0.3', '0.5', '0.7', '0.9'],
+    # NIH
+    'nih_age':        ['age_group_0', 'age_group_1', 'age_group_2']
+
 }
 XLABELS = {
     # ISIC
@@ -48,6 +51,9 @@ XLABELS = {
     'mnist_blur':     'Level of blurring',
     'mnist_fracture': 'Number of fractures',
     'mnist_thinning': 'Thinning strength',
+
+    # NIH 
+    'nih_age':         'Age'
 }
 
 root = Path(__file__).parent.parent / 'results'

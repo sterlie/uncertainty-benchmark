@@ -18,7 +18,8 @@ from torch.utils.data import ConcatDataset, DataLoader, Subset
 
 from src.methods.method_factory import MethodFactory
 from src.experiments.datasets import get_dataset_adapter
-from src.experiments.tasks import run_ood_subgroup_task
+from src.experiments.tasks import run_ood_subgroup_task, run_uncertainty_decomposition
+
 from src.utils.visualization import trend, entropy
 
 # ── Ambiguity task ─────────────────────────────────────────────────────────
@@ -338,7 +339,29 @@ def main(cfg: DictConfig) -> None:
                 level_names=level_names,
                 result_dir=result_dir / "ood_subgroup",
                 plot_dir=plot_dir / "ood_subgroup",
+            )            
+            
+        if distortion_pattern == "mnist_uncertainty_decomp_blur":
+            run_uncertainty_decomposition(
+                cfg=cfg,
+                method=method,
+                eval_loaders=eval_loaders,
+                level_names=level_names,
+                expected_uq_type="aleatoric_uncertainty",
+                result_dir=result_dir / "sensitivity",
+                plot_dir=plot_dir / "sensitivity",
             )
+        if distortion_pattern == "mnist_uncertainty_decomp_fracture":
+            run_uncertainty_decomposition(
+                cfg=cfg,
+                method=method,
+                eval_loaders=eval_loaders,
+                level_names=level_names,
+                expected_uq_type="epistemic_uncertainty",
+                result_dir=result_dir / "sensitivity",
+                plot_dir=plot_dir / "sensitivity",
+            )
+
 
         comparison_summary[method_name] = method_summary
         print({"method": method_name, "status": "done"})
@@ -355,3 +378,5 @@ def main(cfg: DictConfig) -> None:
 
 if __name__ == "__main__":
     main()
+
+    

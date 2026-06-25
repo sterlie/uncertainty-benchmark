@@ -4,7 +4,7 @@ from typing import Dict, List, Tuple
 from omegaconf import DictConfig
 from torch.utils.data import ConcatDataset, DataLoader, Subset
 from torchvision import datasets, transforms
-
+from src.datasets import morpho_mnist as morpho_mnist_module
 
 def _use_subset(dataset, subset_size):
     """Optionally limit dataset to a subset size."""
@@ -14,11 +14,15 @@ def _use_subset(dataset, subset_size):
     return Subset(dataset, list(range(subset_size)))
 
 
-def _mnist_transform(normalize: bool, blur_kernel: int | None = None, blur_sigma: float | None = None):
+def _mnist_transform(normalize: bool, blur_kernel: int | None = None, blur_sigma: float | None = None, blur_prob: float | None = None):
     """Build MNIST transform pipeline with optional blur."""
     tfms = [transforms.ToTensor()]
     if blur_kernel is not None and blur_sigma is not None:
-        tfms.append(transforms.GaussianBlur(kernel_size=int(blur_kernel), sigma=float(blur_sigma)))
+        blur = transforms.GaussianBlur(kernel_size=int(blur_kernel), sigma=float(blur_sigma))
+        if blur_prob is not None:
+            tfms.append(transforms.RandomApply([blur], p=float(blur_prob)))
+        else:
+            tfms.append(blur)
     if normalize:
         tfms.append(transforms.Normalize((0.1307,), (0.3081,)))
     return transforms.Compose(tfms)
@@ -50,16 +54,25 @@ def _build_blur_loaders(
     train_subset_size,
     test_subset_size,
 ) -> Tuple[DataLoader, DataLoader, Dict[str, DataLoader], List[str]]:
+    
+    
     """Build clean training loaders and severity-specific blurred evaluation loaders."""
-    train_plain, val_plain = _build_plain_datasets(
+    _, val_plain = _build_plain_datasets(
         root=root,
         normalize=normalize,
         train_subset_size=train_subset_size,
         test_subset_size=test_subset_size,
     )
+    train_blurred = datasets.MNIST(
+        root=root,
+        train=True,
+        download=True,
+        transform=_mnist_transform(normalize, blur_kernel=5, blur_sigma=1, blur_prob=0.2),
+    )
+    train_blurred = _use_subset(train_blurred, train_subset_size)
 
     clean_train_loader = DataLoader(
-        train_plain,
+        train_blurred,
         batch_size=batch_size,
         shuffle=True,
     )
@@ -80,12 +93,6 @@ def _build_blur_loaders(
         blur_kernel = int(level.kernel)
         blur_sigma = float(level.sigma)
 
-        train_blur = datasets.MNIST(
-            root=root,
-            train=True,
-            download=True,
-            transform=_mnist_transform(normalize, blur_kernel=blur_kernel, blur_sigma=blur_sigma),
-        )
         val_blur = datasets.MNIST(
             root=root,
             train=False,
@@ -95,10 +102,8 @@ def _build_blur_loaders(
 
         val_blur = _use_subset(val_blur, test_subset_size)
 
-        val_mix = ConcatDataset([val_plain, val_blur])
-
         eval_loaders[level_name] = DataLoader(
-            val_mix,
+            val_blur,
             batch_size=batch_size,
             shuffle=False,
         )
@@ -115,25 +120,33 @@ def _build_fracture_loaders(
     test_subset_size,
 ) -> Tuple[DataLoader, DataLoader, Dict[str, DataLoader], List[str]]:
     """Build clean MNIST train/val loaders and fracture-distorted eval loaders."""
-    try:
-        from src.datasets import morpho_mnist as morpho_mnist_module
-    except ImportError as exc:
-        raise ImportError(
-            "morphomnist is required for fracture-based epistemic trend experiments."
-        ) from exc
 
     MorphoMNISTDataset = morpho_mnist_module.MorphoMNISTDataset
     perturb = morpho_mnist_module.perturb
 
-    train_plain, val_plain = _build_plain_datasets(
+    _, val_plain = _build_plain_datasets(
         root=root,
         normalize=normalize,
         train_subset_size=train_subset_size,
         test_subset_size=test_subset_size,
     )
 
+    raw_train = datasets.MNIST(root=root, train=True, download=True)
+    train_images = raw_train.data.numpy()
+    train_labels = raw_train.targets.numpy()
+    if train_subset_size is not None:
+        train_size = min(int(train_subset_size), len(train_images))
+        train_images = train_images[:train_size]
+        train_labels = train_labels[:train_size]
+    train_dataset = MorphoMNISTDataset(
+        train_images,
+        train_labels,
+        perturbation=perturb.Identity(),
+        transform=_mnist_transform(normalize, blur_kernel=5, blur_sigma=1, blur_prob=0.2),
+    )
+
     clean_train_loader = DataLoader(
-        train_plain,
+        train_dataset,
         batch_size=batch_size,
         shuffle=True,
     )
@@ -197,26 +210,25 @@ def _build_thinning_loaders(
     test_subset_size,
 ) -> Tuple[DataLoader, DataLoader, Dict[str, DataLoader], List[str]]:
     """Build clean MNIST train/val loaders and thinning-distorted eval loaders."""
-    try:
-        from src.datasets import morpho_mnist as morpho_mnist_module
-    except ImportError as exc:
-        raise ImportError(
-            "morphomnist is required for thinning-based epistemic trend experiments."
-        ) from exc
 
     MorphoMNISTDataset = morpho_mnist_module.MorphoMNISTDataset
     perturb = morpho_mnist_module.perturb
 
-    train_plain, val_plain = _build_plain_datasets(
+    _, val_plain = _build_plain_datasets(
         root=root,
         normalize=normalize,
         train_subset_size=train_subset_size,
         test_subset_size=test_subset_size,
     )
+    train_blurred = datasets.MNIST(
+        root=root, train=True, download=True,
+        transform=_mnist_transform(normalize, blur_kernel=5, blur_sigma=1, blur_prob=0.2),
+    )
+    train_blurred = _use_subset(train_blurred, train_subset_size)
 
     clean_train_loader = DataLoader(
-        train_plain, 
-        batch_size=batch_size, 
+        train_blurred,
+        batch_size=batch_size,
         shuffle=True)
     clean_val_loader = DataLoader(
         val_plain, 
@@ -305,6 +317,25 @@ def build_mnist_loaders(
             batch_size=batch_size,
             normalize=normalize,
             severity_levels=severity_levels,
+            train_subset_size=train_subset,
+            test_subset_size=test_subset,
+        )
+    if distortion_pattern == "mnist_uncertainty_decomp_blur":
+        return _build_blur_loaders(
+            root=root,
+            batch_size=batch_size,
+            normalize=normalize,
+            severity_levels=cfg.experiment.severity_levels,
+            train_subset_size=train_subset,
+            test_subset_size=test_subset,
+        )
+
+    if distortion_pattern == "mnist_uncertainty_decomp_fracture":
+        return _build_fracture_loaders(
+            root=root,
+            batch_size=batch_size,
+            normalize=normalize,
+            severity_levels=cfg.experiment.severity_levels,
             train_subset_size=train_subset,
             test_subset_size=test_subset,
         )
