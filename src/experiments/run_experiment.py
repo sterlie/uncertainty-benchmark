@@ -230,6 +230,7 @@ def main(cfg: DictConfig) -> None:
 
     methods_to_run = _resolve_methods_to_run(cfg)
     comparison_summary: Dict[str, Dict[str, Dict[str, float]]] = {}
+    auroc_summary: Dict[str, Dict[str, float]] = {}
 
     for method_name in methods_to_run:
         print({"method": method_name, "status": "start"})
@@ -341,26 +342,24 @@ def main(cfg: DictConfig) -> None:
                 plot_dir=plot_dir / "ood_subgroup",
             )            
             
+        _decomp_uq = None
         if distortion_pattern == "mnist_uncertainty_decomp_blur":
-            run_uncertainty_decomposition(
+            _decomp_uq = "aleatoric_uncertainty"
+        elif distortion_pattern == "mnist_uncertainty_decomp_fracture":
+            _decomp_uq = "epistemic_uncertainty"
+        if _decomp_uq is not None:
+            decomp_perf = run_uncertainty_decomposition(
                 cfg=cfg,
                 method=method,
                 eval_loaders=eval_loaders,
                 level_names=level_names,
-                expected_uq_type="aleatoric_uncertainty",
+                expected_uq_type=_decomp_uq,
                 result_dir=result_dir / "sensitivity",
                 plot_dir=plot_dir / "sensitivity",
             )
-        if distortion_pattern == "mnist_uncertainty_decomp_fracture":
-            run_uncertainty_decomposition(
-                cfg=cfg,
-                method=method,
-                eval_loaders=eval_loaders,
-                level_names=level_names,
-                expected_uq_type="epistemic_uncertainty",
-                result_dir=result_dir / "sensitivity",
-                plot_dir=plot_dir / "sensitivity",
-            )
+            auroc_summary[method_name] = {
+                k: v for k, v in decomp_perf.items() if k.startswith("auroc_")
+            }
 
 
         comparison_summary[method_name] = method_summary
@@ -372,6 +371,60 @@ def main(cfg: DictConfig) -> None:
         with open(comparison_path, "w", encoding="utf-8") as f:
             json.dump(comparison_summary, f, indent=2)
         print({"comparison_summary": str(comparison_path)})
+
+    # ── Cross-method AUROC comparison ─────────────────────────────────────
+    if auroc_summary:
+        cmp_plot_dir = Path("plots") / Path(*Path(HydraConfig.get().runtime.output_dir).parts[-3:]) / "comparison"
+        cmp_plot_dir.mkdir(parents=True, exist_ok=True)
+        cmp_result_dir = Path("results") / dataset_name / experiment_name / distortion_pattern / run_id
+        cmp_result_dir.mkdir(parents=True, exist_ok=True)
+
+        with open(cmp_result_dir / "auroc_summary.json", "w", encoding="utf-8") as f:
+            json.dump(auroc_summary, f, indent=2)
+
+        method_names_with_auroc = list(auroc_summary.keys())
+        colors = plt.cm.tab10.colors
+
+        # Detect which uq_key was used (same for all methods in a run)
+        _sample_keys = list(next(iter(auroc_summary.values())).keys())
+        if any("aleatoric_uncertainty" in k for k in _sample_keys):
+            _cmp_uq_key = "aleatoric_uncertainty"
+        else:
+            _cmp_uq_key = "epistemic_uncertainty"
+
+        # Per-level AUROC line plot (one line per method)
+        fig, ax = plt.subplots(figsize=(10, 5))
+        x = np.arange(len(level_names))
+        for i, mname in enumerate(method_names_with_auroc):
+            per_level = [auroc_summary[mname].get(f"auroc_{_cmp_uq_key}_{lvl}", float("nan")) for lvl in level_names]
+            ax.plot(x, per_level, marker="o", label=mname, color=colors[i % len(colors)])
+        ax.axhline(0.5, color="gray", linestyle="--", linewidth=1, label="random")
+        ax.set_xticks(x)
+        ax.set_xticklabels(level_names, rotation=30, ha="right")
+        ax.set_ylabel("AUROC  (dominant uncertainty vs not)")
+        ax.set_title(f"Per-level AUROC — all methods  [{distortion_pattern}]")
+        ax.set_ylim(0, 1.05)
+        ax.legend(fontsize=8)
+        plt.tight_layout()
+        fig.savefig(cmp_plot_dir / "auroc_per_level_comparison.png", bbox_inches="tight")
+        plt.close(fig)
+
+        # Mean AUROC bar chart
+        mean_aurocs = [auroc_summary[m].get("auroc_mean", float("nan")) for m in method_names_with_auroc]
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.bar(np.arange(len(method_names_with_auroc)), mean_aurocs,
+               color=[colors[i % len(colors)] for i in range(len(method_names_with_auroc))])
+        ax.axhline(0.5, color="gray", linestyle="--", linewidth=1, label="random")
+        ax.set_xticks(np.arange(len(method_names_with_auroc)))
+        ax.set_xticklabels(method_names_with_auroc, rotation=30, ha="right")
+        ax.set_ylabel("Mean AUROC")
+        ax.set_title(f"Mean AUROC across levels — all methods  [{distortion_pattern}]")
+        ax.set_ylim(0, 1.05)
+        ax.legend()
+        plt.tight_layout()
+        fig.savefig(cmp_plot_dir / "auroc_mean_comparison.png", bbox_inches="tight")
+        plt.close(fig)
+        print({"auroc_comparison": str(cmp_plot_dir)})
 
     print({"status": "done", "methods": methods_to_run, "levels": level_names, "output_dir": os.getcwd() + "/results"})
 

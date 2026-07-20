@@ -286,7 +286,7 @@ def run_uncertainty_decomposition(
     # compute sensitivity on normalised uncertainty scores
     performance: dict = {}
     per_level_sensitivity: list = []
-
+    per_level_auroc: list = []
 
     for name in level_names:
         expected = _to_numpy(uncertainties[name][expected_uq_type])
@@ -301,10 +301,24 @@ def run_uncertainty_decomposition(
         per_level_sensitivity.append(sensitivity)
         performance[f"sensitivity_{name}"] = sensitivity
 
+        # per-level AUROC: score = expected, label = 1 if expected dominates
+        true_labels = (expected > other).astype(int)
+        n_pos, n_neg = int(true_labels.sum()), int((true_labels == 0).sum())
+        if n_pos == 0 or n_neg == 0:
+            auroc = float("nan")
+            print(f"  [{name}] AUROC=nan  ({n_pos} pos, {n_neg} neg)")
+        else:
+            auroc = float(roc_auc_score(true_labels, expected))
+            print(f"  [{name}] AUROC={auroc:.4f}  ({n_pos} pos / {n_neg} neg)")
+        per_level_auroc.append(auroc)
+        performance[f"auroc_{expected_uq_type}_{name}"] = auroc
+
     # log over-all-levels sensitivity 
     overall = float(np.nanmean(per_level_sensitivity))
     performance["sensitivity_mean"] = overall
-    
+    overall_auroc = float(np.nanmean(per_level_auroc))
+    performance["auroc_mean"] = overall_auroc
+
     # PLot sensitivity bar chart 
     fig, ax = plt.subplots(figsize=(8, 4))
     x = np.arange(len(level_names))
@@ -322,6 +336,24 @@ def run_uncertainty_decomposition(
     ax.legend()
     plt.tight_layout()
     fig.savefig(plot_dir / "sensitivity.png")
+    plt.close(fig)
+
+    # AUROC per-level line plot
+    gt_label = "aleatoric" if "aleatoric" in expected_uq_type else "epistemic"
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.plot(x, per_level_auroc, marker="o", color=color)
+    ax.axhline(0.5, color="gray", linestyle="--", linewidth=1, label="random (0.5)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(level_names, rotation=30, ha="right")
+    ax.set_ylabel(f"AUROC  ({gt_label} dominant vs not)")
+    ax.set_title(
+        f"Per-level AUROC — {gt_label} eval set\n"
+        f"score={expected_uq_type}, label=1 if dominant  |  mean = {overall_auroc:.3f}"
+    )
+    ax.set_ylim(0, 1.05)
+    ax.legend()
+    plt.tight_layout()
+    fig.savefig(plot_dir / "auroc_per_level.png", bbox_inches="tight")
     plt.close(fig)
 
     with open(result_dir / "sensitivity.json", "w") as f:
@@ -357,6 +389,9 @@ def run_uncertainty_decomposition(
     plt.tight_layout()
     fig.savefig(plot_dir / "sensitivity_scatter.png", bbox_inches="tight")
     plt.close(fig)
+
+
+
 
 
     return performance

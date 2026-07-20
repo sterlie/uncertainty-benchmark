@@ -288,10 +288,12 @@ def build_chest_subgroup_slices(
         return slices
 
     if subgroup == "by_disease_count":
-        return {
-            "low_disease": df[df["disease_count"] <= disease_count_threshold].reset_index(drop=True),
-            "high_disease": df[df["disease_count"] > disease_count_threshold].reset_index(drop=True),
-        }
+        slices = {}
+        for count in sorted(df["disease_count"].unique()):
+            subset = df[df["disease_count"] == count].reset_index(drop=True)
+            if len(subset) > 0:
+                slices[f"disease_{int(count)}"] = subset
+        return slices
 
     raise ValueError(
         f"Unknown subgroup '{subgroup}'. "

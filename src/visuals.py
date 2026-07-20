@@ -37,8 +37,8 @@ ORDERS = {
     'mnist_fracture': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
     'mnist_thinning': ['0.1', '0.3', '0.5', '0.7', '0.9'],
     # NIH
-    'nih_age':        ['age_group_0', 'age_group_1', 'age_group_2']
-
+    'nih_age':        ['age_0', 'age_10', 'age_20', 'age_30', 'age_40', 'age_50', 'age_60', 'age_70', 'age_80', 'age_90'],
+    'nih_disease':    [f'disease_{i}' for i in range(7)]
 }
 XLABELS = {
     # ISIC
@@ -53,7 +53,8 @@ XLABELS = {
     'mnist_thinning': 'Thinning strength',
 
     # NIH 
-    'nih_age':         'Age'
+    'nih_age':         'Age',
+    'nih_disease':     'Disease count'
 }
 
 root = Path(__file__).parent.parent / 'results'
