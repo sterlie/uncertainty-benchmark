@@ -1,0 +1,12 @@
+name: mnist_uncertainty_decomp_fracture
+distortion_pattern: mnist_uncertainty_decomp_fracture
+
+
+# training
+epochs: 3
+lr: 0.001
+weight_decay: 0.0
+normalize: True
+
+# number of fracture levels for eval (never seen during training → epistemic)
+severity_levels: 5
