@@ -141,7 +141,7 @@ def _build_fracture_loaders(
     train_dataset = MorphoMNISTDataset(
         train_images,
         train_labels,
-        perturbation=perturb.Identity(),
+        perturbation=None,
         transform=_mnist_transform(normalize, blur_kernel=5, blur_sigma=1, blur_prob=0.2),
     )
 
