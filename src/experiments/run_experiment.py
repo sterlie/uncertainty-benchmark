@@ -227,6 +227,7 @@ def main(cfg: DictConfig) -> None:
     dataset_name = str(cfg.dataset.name)
     experiment_name = str(cfg.experiment.name)
     run_id = str(cfg.output.get("run_id", "run"))
+    project_root = Path(HydraConfig.get().runtime.cwd)
 
     methods_to_run = _resolve_methods_to_run(cfg)
     comparison_summary: Dict[str, Dict[str, Dict[str, float]]] = {}
@@ -239,10 +240,18 @@ def main(cfg: DictConfig) -> None:
         method_cfg = MethodFactory.load_method_config(cfg, method_name)
         method = MethodFactory.create(method_cfg)
 
-        project_root = Path(HydraConfig.get().runtime.cwd)
         model_dir = project_root / "models" / dataset_name / method_name
         hydra_out = Path(HydraConfig.get().runtime.output_dir)
-        result_dir = hydra_out / method_name
+        result_dir = project_root / "results" / experiment_name / method_name
+
+        # ── Skip if this method's results already exist ────────────────────
+        _done_marker = result_dir / ("amb_task_performance.json" if is_amb else "uncertainties_summary.json")
+        if _done_marker.exists():
+            print({"method": method_name, "status": "skipped (results exist)", "path": str(result_dir)})
+            if not is_amb:
+                with open(_done_marker) as _f:
+                    comparison_summary[method_name] = json.load(_f)
+            continue
         # Mirror results path under plots/: plots/YYYY-MM-DD/experiment_name/HH-MM-SS/method_name
         plot_dir = Path("plots") / Path(*hydra_out.parts[-3:]) / method_name
         model_dir.mkdir(parents=True, exist_ok=True)
@@ -366,7 +375,7 @@ def main(cfg: DictConfig) -> None:
         print({"method": method_name, "status": "done"})
 
     if len(methods_to_run) > 1:
-        comparison_path = Path("results") / dataset_name / experiment_name / distortion_pattern / run_id / "method_comparison_summary.json"
+        comparison_path = project_root / "results" / experiment_name / "method_comparison_summary.json"
         comparison_path.parent.mkdir(parents=True, exist_ok=True)
         with open(comparison_path, "w", encoding="utf-8") as f:
             json.dump(comparison_summary, f, indent=2)
@@ -376,7 +385,7 @@ def main(cfg: DictConfig) -> None:
     if auroc_summary:
         cmp_plot_dir = Path("plots") / Path(*Path(HydraConfig.get().runtime.output_dir).parts[-3:]) / "comparison"
         cmp_plot_dir.mkdir(parents=True, exist_ok=True)
-        cmp_result_dir = Path("results") / dataset_name / experiment_name / distortion_pattern / run_id
+        cmp_result_dir = project_root / "results" / experiment_name
         cmp_result_dir.mkdir(parents=True, exist_ok=True)
 
         with open(cmp_result_dir / "auroc_summary.json", "w", encoding="utf-8") as f:

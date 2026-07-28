@@ -61,20 +61,15 @@ root = Path(__file__).parent.parent / 'results'
 
 
 def latest_result(experiment, date=None):
-    """Return the most-recent result directory for an experiment."""
-    available_dates = sorted(
-        d.name for d in os.scandir(root)
-        if d.is_dir() and (root / d.name / experiment).is_dir()
-    )
-    if not available_dates:
-        raise FileNotFoundError(f'No results found for {experiment}')
-    chosen = date if date else available_dates[-1]
-    exp_root = root / chosen / experiment
-    newest_time = max(
-        (d for d in os.scandir(exp_root) if d.is_dir()),
-        key=lambda d: d.stat().st_mtime
-    ).name
-    return exp_root / newest_time
+    """Return the result directory for an experiment.
+
+    Results now use a flat structure: results/{experiment}/{method}/
+    The ``date`` parameter is accepted but ignored.
+    """
+    exp_dir = root / experiment
+    if not exp_dir.is_dir():
+        raise FileNotFoundError(f'No results found for {experiment} at {exp_dir}')
+    return exp_dir
 
 
 results = {}
@@ -86,17 +81,15 @@ def load_results(date_overrides=None, experiments=None):
     Parameters
     ----------
     date_overrides : dict, optional
-        Mapping of experiment name → ``'YYYY-MM-DD'`` to pin a specific date.
-        Omit a key (or pass ``None``) to use the most-recent available date.
+        Ignored (kept for backward compatibility). Results use a flat
+        ``results/{experiment}/`` structure with no date/time folders.
     experiments : list, optional
         Subset of experiment names to load.  Defaults to all keys in ORDERS.
     """
-    date_overrides = date_overrides or {}
     results.clear()
     for exp in (experiments if experiments is not None else list(ORDERS)):
-        date = date_overrides.get(exp)
         try:
-            results[exp] = latest_result(exp, date)
+            results[exp] = latest_result(exp)
             print(f"  {exp}: {results[exp]}")
         except FileNotFoundError as e:
             print(f"  {exp}: not found — {e}")
