@@ -1,5 +1,5 @@
 name: isic
-batch_size: 16
+batch_size: 256
 num_classes: 6
 channels: 3
 image_size: 224

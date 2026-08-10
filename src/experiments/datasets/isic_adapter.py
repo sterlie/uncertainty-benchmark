@@ -70,36 +70,24 @@ def _split_single(cfg: DictConfig, df: pd.DataFrame):
     train_subset = cfg.dataset.get("train_subset", None)
     test_subset = cfg.dataset.get("test_subset", None)
 
-    # Split by lesion to avoid leakage across two images per lesion.
-    lesion_col = str(cfg.dataset.get("lesion_id_col", "lesion_id"))
-    lesion_labels = (
-        df[[lesion_col, "label"]]
-        .drop_duplicates(subset=[lesion_col])
-        .reset_index(drop=True)
-    )
-    # stratify on dominant class (argmax) since label is a multilabel vector
-    lesion_labels["_stratify"] = lesion_labels["label"].apply(lambda v: int(np.array(v).argmax()))
-
-    train_lesions, test_lesions = train_test_split(
-        lesion_labels,
+    stratify = df["label"].apply(lambda v: int(np.array(v).argmax()))
+    train_df, test_df = train_test_split(
+        df,
         test_size=float(cfg.dataset.get("test_ratio", 0.2)),
         random_state=int(cfg.seed),
-        stratify=lesion_labels["_stratify"],
+        stratify=stratify,
     )
-    train_lesions, val_lesions = train_test_split(
-        train_lesions,
+    train_stratify = train_df["label"].apply(lambda v: int(np.array(v).argmax()))
+    train_df, val_df = train_test_split(
+        train_df,
         test_size=float(cfg.dataset.get("val_ratio", 0.2)),
         random_state=int(cfg.seed),
-        stratify=train_lesions["_stratify"],
+        stratify=train_stratify,
     )
 
-    train_df = df[df[lesion_col].isin(set(train_lesions[lesion_col]))].reset_index(drop=True)
-    val_df = df[df[lesion_col].isin(set(val_lesions[lesion_col]))].reset_index(drop=True)
-    test_df = df[df[lesion_col].isin(set(test_lesions[lesion_col]))].reset_index(drop=True)
-
-    train_df = subset_df(train_df, train_subset)
-    val_df = subset_df(val_df, test_subset)
-    test_df = subset_df(test_df, test_subset)
+    train_df = subset_df(train_df.reset_index(drop=True), train_subset)
+    val_df = subset_df(val_df.reset_index(drop=True), test_subset)
+    test_df = test_df.reset_index(drop=True)
     return train_df, val_df, test_df
 
 
@@ -112,36 +100,26 @@ def _split_kfold(cfg: DictConfig, df: pd.DataFrame):
     if fold_index < 0 or fold_index >= n_splits:
         raise ValueError(f"dataset.cv.fold_index={fold_index} must be in [0, {n_splits - 1}]")
 
-    lesion_col = str(cfg.dataset.get("lesion_id_col", "lesion_id"))
-    lesion_labels = (
-        df[[lesion_col, "label"]]
-        .drop_duplicates(subset=[lesion_col])
-        .reset_index(drop=True)
-    )
-    lesion_labels["_stratify"] = lesion_labels["label"].apply(lambda v: int(np.array(v).argmax()))
-
+    stratify = df["label"].apply(lambda v: int(np.array(v).argmax()))
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-    splits = list(skf.split(lesion_labels, lesion_labels["_stratify"]))
+    splits = list(skf.split(df, stratify))
     trainval_idx, test_idx = splits[fold_index]
 
-    trainval_lesions = lesion_labels.iloc[trainval_idx].reset_index(drop=True)
-    test_lesions = lesion_labels.iloc[test_idx].reset_index(drop=True)
+    trainval_df = df.iloc[trainval_idx].reset_index(drop=True)
+    test_df = df.iloc[test_idx].reset_index(drop=True)
 
-    train_lesions, val_lesions = train_test_split(
-        trainval_lesions,
+    trainval_stratify = trainval_df["label"].apply(lambda v: int(np.array(v).argmax()))
+    train_df, val_df = train_test_split(
+        trainval_df,
         test_size=float(cfg.dataset.get("val_ratio", 0.2)),
         random_state=seed,
-        stratify=trainval_lesions["_stratify"],
+        stratify=trainval_stratify,
     )
-
-    train_df = df[df[lesion_col].isin(set(train_lesions[lesion_col]))].reset_index(drop=True)
-    val_df = df[df[lesion_col].isin(set(val_lesions[lesion_col]))].reset_index(drop=True)
-    test_df = df[df[lesion_col].isin(set(test_lesions[lesion_col]))].reset_index(drop=True)
 
     train_subset = cfg.dataset.get("train_subset", None)
     test_subset = cfg.dataset.get("test_subset", None)
-    train_df = subset_df(train_df, train_subset)
-    val_df = subset_df(val_df, test_subset)
+    train_df = subset_df(train_df.reset_index(drop=True), train_subset)
+    val_df = subset_df(val_df.reset_index(drop=True), test_subset)
     test_df = subset_df(test_df, test_subset)
     return train_df, val_df, test_df
 

@@ -1,5 +1,5 @@
 name: isic_age
-epochs: 3
+epochs: 100
 lr: 0.001
 weight_decay: 0.0
 normalize: true
