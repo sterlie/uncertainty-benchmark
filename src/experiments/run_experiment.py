@@ -25,7 +25,7 @@ from src.utils.visualization import trend, entropy
 # ── Ambiguity task ─────────────────────────────────────────────────────────
 
 def _concat_uncertainty_key(results: list, key: str) -> np.ndarray:
-    return np.concatenate([r[key].detach().cpu().numpy() for r in results])
+    return np.concatenate([r[key].detach().get_device().numpy() for r in results])
 
 
 def _plot_amb_distributions(results: list, targets_np: np.ndarray, plot_dir: Path, prefix: str):
@@ -45,7 +45,7 @@ def _plot_amb_distributions(results: list, targets_np: np.ndarray, plot_dir: Pat
 
 
 def _eval_amb_detection(results: list, targets: torch.Tensor, performance: dict, prefix: str) -> dict:
-    targets_np = targets.cpu().numpy()
+    targets_np = targets.get_device().numpy()
     for ut in ["total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty"]:
         scores = _concat_uncertainty_key(results, ut)
         m_clear = float(np.mean(scores[targets_np == 0]))
@@ -128,7 +128,7 @@ def run_ambiguous_uncertainty_task(
             performance[f"amb_auroc_{ut}"] = float("nan")
             print(f"  {ut}: clear_mean=nan  amb_mean=nan  AUROC=nan  (no ambiguous samples)")
     else:
-        _plot_amb_distributions(results, amb_targets.cpu().numpy(), plot_dir, prefix="amb")
+        _plot_amb_distributions(results, amb_targets.get_device().numpy(), plot_dir, prefix="amb")
         performance = _eval_amb_detection(results, amb_targets, performance, prefix="amb")
 
     clear_mask = (amb_targets == 0)
@@ -141,7 +141,7 @@ def run_ambiguous_uncertainty_task(
             for k, v in r.items()
         } for r in results]
         print(f"Misclassification: {miscls_targets.sum().item()} / {clear_mask.sum().item()}")
-        _plot_amb_distributions(miscls_results, miscls_targets.cpu().numpy(), plot_dir, prefix="miscls")
+        _plot_amb_distributions(miscls_results, miscls_targets.get_device().numpy(), plot_dir, prefix="miscls")
         performance = _eval_amb_detection(miscls_results, miscls_targets, performance, prefix="miscls")
 
     with open(result_dir / "amb_task_performance.json", "w") as f:
