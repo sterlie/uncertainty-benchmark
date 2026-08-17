@@ -88,7 +88,7 @@ def _eval_amb_detection(results: list, targets: torch.Tensor, performance: dict,
         performance[f"{prefix}_dist_{ut}_std"] = [std_clear, std_amb]
         auroc = float(roc_auc_score(targets_np, scores)) if len(np.unique(targets_np)) > 1 else float("nan")
         performance[f"{prefix}_auroc_{ut}"] = auroc
-        
+
         print(f"  {ut}: clear_mean={m_clear:.4f}  amb_mean={m_amb:.4f}  AUROC={auroc:.4f}")
     return performance
 
@@ -167,6 +167,8 @@ def run_ambiguous_uncertainty_task(
         performance = _eval_amb_detection(results, amb_targets, performance, prefix="amb")
 
     clear_mask = (amb_targets == 0)
+    clear_mask = clear_mask.detach().cpu()
+    
     if clear_mask.sum() > 0:
         preds_clear = (all_predictions[clear_mask] > 0.5)
         true_clear = (all_targets[clear_mask] == 1)
