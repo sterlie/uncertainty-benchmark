@@ -30,7 +30,7 @@ def _concat_uncertainty_key(
     device: str = "cuda",
 ) -> torch.Tensor:
     return torch.cat(
-        [r[key].detach().to(device) for r in results],
+        [r[key].detach().cpu().numpy() for r in results],
         dim=0,
     )
 
