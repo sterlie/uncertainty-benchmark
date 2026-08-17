@@ -24,15 +24,11 @@ from src.utils.visualization import trend, entropy
 
 # ── Ambiguity task ─────────────────────────────────────────────────────────
 
-def _concat_uncertainty_key(
-    results: list,
-    key: str,
-    device: str = "cuda",
-) -> torch.Tensor:
+def _concat_uncertainty_key(results: list, key: str) -> np.ndarray:
     return torch.cat(
-        [r[key].detach().cpu().numpy() for r in results],
+        [r[key].detach() for r in results],
         dim=0,
-    )
+    ).cpu().numpy()
 
 
 def _plot_amb_distributions(results: list, targets_np: np.ndarray, plot_dir: Path, prefix: str):
@@ -135,7 +131,7 @@ def run_ambiguous_uncertainty_task(
             performance[f"amb_auroc_{ut}"] = float("nan")
             print(f"  {ut}: clear_mean=nan  amb_mean=nan  AUROC=nan  (no ambiguous samples)")
     else:
-        _plot_amb_distributions(results, amb_targets.detach().cpu().numpy(), plot_dir, prefix="amb")
+        _plot_amb_distributions(results, amb_targets.detach().cpu().numpy, plot_dir, prefix="amb")
         performance = _eval_amb_detection(results, amb_targets, performance, prefix="amb")
 
     clear_mask = (amb_targets == 0)
