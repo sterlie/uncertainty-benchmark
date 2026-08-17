@@ -75,7 +75,9 @@ def _plot_amb_distributions(
 
 
 def _eval_amb_detection(results: list, targets: torch.Tensor, performance: dict, prefix: str) -> dict:
-    targets_np = targets.detach()
+
+    targets_np = targets_np.detach().cpu().numpy()
+    
     for ut in ["total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty"]:
         scores = _concat_uncertainty_key(results, ut)
         m_clear = float(np.mean(scores[targets_np == 0]))
