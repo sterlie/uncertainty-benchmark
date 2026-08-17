@@ -9,9 +9,10 @@ pin_memory: true
 train_subset: null
 test_subset: null
 
-data_root: ${data.root}/vin
-images_dir: ${dataset.data_root}
-metadata_csv: ${dataset.data_root}/annotations/train.csv
+data_root: /work3/dida/dataset/vinbigdata-chest-xray-abnormalities-detection
+#data_root: ${data.root}/vin
+images_dir: ${dataset.data_root}/train_images
+metadata_csv: ${dataset.data_root}/train.csv
 
 multilabel: true
 
