@@ -31,17 +31,44 @@ def _concat_uncertainty_key(results: list, key: str) -> np.ndarray:
     ).cpu().numpy()
 
 
-def _plot_amb_distributions(results: list, targets_np: np.ndarray, plot_dir: Path, prefix: str):
+def _plot_amb_distributions(
+    results: list,
+    targets_np,
+    plot_dir: Path,
+    prefix: str,
+):
+    
+    targets_np = targets_np.detach().cpu().numpy()
+
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    for idx, ut in enumerate(["total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty"]):
+
+    for idx, ut in enumerate([
+        "total_uncertainty",
+        "aleatoric_uncertainty",
+        "epistemic_uncertainty",
+    ]):
         scores = _concat_uncertainty_key(results, ut)
-        axes[idx].hist(scores[targets_np == 0], label="Clear", bins=50, alpha=0.5)
-        axes[idx].hist(scores[targets_np == 1], label="Ambiguous", bins=50, alpha=0.5)
+
+        axes[idx].hist(
+            scores[targets_np == 0],
+            label="Clear",
+            bins=50,
+            alpha=0.5,
+        )
+        axes[idx].hist(
+            scores[targets_np == 1],
+            label="Ambiguous",
+            bins=50,
+            alpha=0.5,
+        )
+
         axes[idx].set_xlabel("Score")
         axes[idx].set_ylabel("Count")
         axes[idx].legend()
         axes[idx].set_title(ut)
+
     plt.tight_layout()
+
     plot_dir.mkdir(parents=True, exist_ok=True)
     fig.savefig(plot_dir / f"{prefix}_uncertainty_distributions.png")
     plt.close(fig)
