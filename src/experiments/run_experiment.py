@@ -76,8 +76,8 @@ def _plot_amb_distributions(
 
 def _eval_amb_detection(results: list, targets: torch.Tensor, performance: dict, prefix: str) -> dict:
 
-    targets_np = targets_np.detach().cpu().numpy()
-    
+    targets_np = targets.detach().cpu().numpy()
+
     for ut in ["total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty"]:
         scores = _concat_uncertainty_key(results, ut)
         m_clear = float(np.mean(scores[targets_np == 0]))
@@ -88,6 +88,7 @@ def _eval_amb_detection(results: list, targets: torch.Tensor, performance: dict,
         performance[f"{prefix}_dist_{ut}_std"] = [std_clear, std_amb]
         auroc = float(roc_auc_score(targets_np, scores)) if len(np.unique(targets_np)) > 1 else float("nan")
         performance[f"{prefix}_auroc_{ut}"] = auroc
+        
         print(f"  {ut}: clear_mean={m_clear:.4f}  amb_mean={m_amb:.4f}  AUROC={auroc:.4f}")
     return performance
 
