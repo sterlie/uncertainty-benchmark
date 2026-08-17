@@ -108,8 +108,10 @@ def run_ambiguous_uncertainty_task(
         with open(cache_path, "wb") as f:
             pickle.dump(results, f)
 
-    all_predictions = torch.cat([r["predictions"] for r in results], dim=0)
-    all_targets = torch.cat([r["ground_truth"] for r in results], dim=0)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    all_predictions = torch.cat([r["predictions"] for r in results], dim=0).to(device)
+    all_targets = torch.cat([r["ground_truth"] for r in results], dim=0).to(device)
 
     amb_targets = (all_targets == -1).any(dim=-1).long()
     n_amb = int(amb_targets.sum().item())
@@ -131,7 +133,7 @@ def run_ambiguous_uncertainty_task(
             performance[f"amb_auroc_{ut}"] = float("nan")
             print(f"  {ut}: clear_mean=nan  amb_mean=nan  AUROC=nan  (no ambiguous samples)")
     else:
-        _plot_amb_distributions(results, amb_targets.detach().cpu().numpy, plot_dir, prefix="amb")
+        _plot_amb_distributions(results, amb_targets, plot_dir, prefix="amb")
         performance = _eval_amb_detection(results, amb_targets, performance, prefix="amb")
 
     clear_mask = (amb_targets == 0)
