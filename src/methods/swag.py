@@ -251,19 +251,18 @@ class Swag(Method):
         self.train_loader = train_loader
         model_name = self.config.model.name
         dataset_name = self.config.dataset.name
-        try:
-            from hydra.core.hydra_config import HydraConfig
-            project_root = Path(HydraConfig.get().runtime.cwd)
-        except Exception:
-            project_root = Path(os.getcwd())
-        path = (
-            project_root
-            / "models"
-            / dataset_name
-            / self.model_dir
-            / "checkpoints"
-            / f"swag_model_{model_name}.pt"
-        )
+        
+        save_dir = self.config.dataset.get('save_dir', None)
+        save_dir = self.config.dataset.get(f'{save_dir}/swag', None)
+        if save_dir:
+            base_path = Path(save_dir)
+        else:
+            try:
+                from hydra.core.hydra_config import HydraConfig
+                base_path = Path(HydraConfig.get().runtime.cwd) / "models" / dataset_name
+            except Exception:
+                base_path = Path(os.getcwd()) / "models" / dataset_name
+        path = base_path / self.model_dir / "checkpoints" / f"swag_model_{model_name}.pt"
         if path.exists():
             self.swag_model.load_state_dict(
                 torch.load(path, map_location=self.device)

@@ -12,6 +12,7 @@ test_subset: null
 data_root: /work3/dida/dataset/vinbigdata-chest-xray-abnormalities-detection
 #data_root: ${data.root}/vin
 images_dir: ${dataset.data_root}
+save_dir: /work3/sarste/vin/models/
 metadata_csv: ${dataset.data_root}/train.csv
 
 multilabel: true
