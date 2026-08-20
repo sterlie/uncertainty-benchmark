@@ -11,7 +11,7 @@ class Metric:
         self.config = config
         self.task = task
         self.threshold_name = f"{task}_threshold"
-        self.multi_label = (config.dataset.name in ["nih", "chexpert", "vin_chest"]) and (config.dataset.chosen_disease is None)
+        self.multi_label = bool(config.dataset.get('multilabel', False)) and (config.dataset.chosen_disease is None)
         self.reduction = not config.dataset.get('uncertainty_per_class', False)
 
         assert task in ["classification", "ood", "misclassify"]
