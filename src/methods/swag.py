@@ -52,7 +52,7 @@ class Swag(Method):
         scheduler_arguments = arguments.pop("scheduler", None)
         self.optimizer = torch.optim.SGD(
             self.model.parameters(),
-            lr=arguments["lr"] * self.config.method.lr_increase_factor,
+            lr=arguments["lr"] * self.config.lr_increase_factor,
             weight_decay=arguments.get("weight_decay", 0.0),
             momentum=arguments.get("momentum", 0.9),
         )
@@ -251,7 +251,6 @@ class Swag(Method):
         self.train_loader = train_loader
         model_name = self.config.model.name
         dataset_name = self.config.dataset.name
-        save_dir = self.config.dataset.get('save_dir'
         try:
             from hydra.core.hydra_config import HydraConfig
             project_root = Path(HydraConfig.get().runtime.cwd)
@@ -265,17 +264,6 @@ class Swag(Method):
             / "checkpoints"
             / f"swag_model_{model_name}.pt"
         )
-, None)
-        save_dir = self.config.dataset.get(f'{save_dir}/swag', None)
-        if save_dir:
-            base_path = Path(save_dir)
-        else:
-            try:
-                from hydra.core.hydra_config import HydraConfig
-                base_path = Path(HydraConfig.get().runtime.cwd) / "models" / dataset_name
-            except Exception:
-                base_path = Path(os.getcwd()) / "models" / dataset_name
-        path = base_path / self.model_dir / "checkpoints" / f"swag_model_{model_name}.pt"
         if path.exists():
             self.swag_model.load_state_dict(
                 torch.load(path, map_location=self.device)
