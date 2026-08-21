@@ -378,10 +378,8 @@ class ChestXrayDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         sample = self.samples[idx]
-        try:
-            image = Image.open(sample["image_path"]).convert("RGB")
-        except Exception:
-            raise IOError(f"Failed to load image: {sample['image_path']}")
+
+        image = Image.open(sample["image_path"]).convert("RGB")
 
         image = T.ToTensor()(image)
 
