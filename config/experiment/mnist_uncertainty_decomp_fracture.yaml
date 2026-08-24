@@ -3,7 +3,7 @@ distortion_pattern: mnist_uncertainty_decomp_fracture
 
 
 # training
-epochs: 3
+epochs: 50
 lr: 0.001
 weight_decay: 0.0
 normalize: True

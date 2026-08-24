@@ -313,7 +313,7 @@ def _cap_per_patient(df: pd.DataFrame, num_per_patient: int, rs: int) -> pd.Data
 def _split_by_patient(cfg: DictConfig, df: pd.DataFrame):
     """Stratified patient-level splitting:
 
-    1. Caps number of images per patient via *num_per_patient* (prioritize disease-positive).
+    1. Caps number of images per patient via *num_per_patient* (prioritize disease-positive images).
     2. Assigns each patient a subgroup label based on *population_division*
        (by_gender / by_age / by_disease_count).
     3. Splits patients 60/20/20 *within* each (subgroup × has_disease) bucket
@@ -329,7 +329,7 @@ def _split_by_patient(cfg: DictConfig, df: pd.DataFrame):
     perc_val = float(cfg.dataset.get("val_ratio", 0.2))
     perc_test = float(cfg.dataset.get("test_ratio", 0.2))
 
-    # sepcify if training/testing on subset or balansed data 
+    # sepcify if training/testing on subset or balanced data 
     train_subset = cfg.dataset.get("train_subset", None)
     test_subset = cfg.dataset.get("test_subset", None)
 
