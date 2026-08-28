@@ -91,15 +91,14 @@ def _extract_chexpert_patient_id(csv_path: str) -> str:
 
 
 def _resolve_chexpert_path(csv_path: str, images_dir: str) -> str:
-    """Strip the CheXpert prefix up to 'valid/' and join with images_dir."""
+    """Strip the CheXpert prefix up to 'train/' or 'valid/' and join with images_dir."""
     parts = csv_path.replace("\\", "/")
-    marker = "valid/"
-    idx = parts.find(marker)
-    if idx >= 0:
-        relative = parts[idx + len(marker):]
-    else:
-        relative = os.path.basename(parts)
-    return os.path.join(images_dir, relative)
+    for marker in ("train/", "valid/"):
+        idx = parts.find(marker)
+        if idx >= 0:
+            relative = parts[idx + len(marker):]
+            return os.path.join(images_dir, relative)
+    return os.path.join(images_dir, os.path.basename(parts))
 
 
 def _resolve_nih_path(csv_path: str, images_dir: str) -> str:
