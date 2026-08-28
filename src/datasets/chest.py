@@ -2,11 +2,8 @@
 
 All three datasets share the same multilabel disease classification structure
 with identical transform pipelines. Differences (column names, age grouping
-direction, disease labels, path resolution, presence of gender/age metadata)
-are parameterised via config and dataset-specific defaults in chest_adapter.py.
-
-VinDr-CXR note: has no gender or age metadata; only by_disease_count population
-division is meaningful, and only ambiguity experiments are supported.
+direction, disease labels, path resolution, metadata) are parameterised via 
+config and dataset-specific defaults in chest_adapter.py.
 """
 
 import os
@@ -19,7 +16,6 @@ import torch
 import torchvision.transforms as T
 
 # CheXpert classes  
-
 CHEXPERT_CLASSES = [
     "Enlarged Cardiomediastinum", "Cardiomegaly", "Lung Opacity", "Lung Lesion",
     "Edema", "Consolidation", "Pneumonia", "Atelectasis", "Pneumothorax",
@@ -29,7 +25,6 @@ CHEXPERT_CLASSES = [
 CHEXPERT_GENDER_MAP = {"Female": 0, "Male": 1}
 
 # NIH classes
-
 NIH_CLASSES = [
     "Atelectasis", "Consolidation", "Infiltration", "Pneumothorax", "Edema",
     "Emphysema", "Fibrosis", "Effusion", "Pneumonia", "Pleural_Thickening",
@@ -37,7 +32,6 @@ NIH_CLASSES = [
 ]
 
 NIH_GENDER_MAP = {"F": 0, "M": 1}
-
 
 # VIN classes
 _VIN_LABELS_FULL = [
@@ -54,20 +48,12 @@ def map_age(age, age_lower=50, age_upper=70, direction="descending"):
     """Map age to group index (3 groups).
     0 = young (<lower), 1 = middle, 2 = old
     """
-    #if direction == "descending":
-    #    if age >= age_upper:
-    #        return 0
-    #    elif age >= age_lower:
-    #        return 1
-    #    return 2
-    #else:  # ascending
     if age < age_lower:
         return 0
     elif age < age_upper:
         return 1
     return 2
 
-    Transformation 
 
 def center_crop(img):
     """Crop tensor image to a centered square (minimum of H, W)."""
@@ -95,7 +81,6 @@ def build_chest_transform(image_size: int = 224, crop: int = None, training: boo
 
 
 # Data table preperation 
-
 def _extract_chexpert_patient_id(csv_path: str) -> str:
     """Extract patient id from CheXpert path, e.g. '.../valid/patient64541/...' -> 'patient64541'."""
     parts = csv_path.replace("\\", "/").split("/")
@@ -302,8 +287,6 @@ def build_chest_subgroup_slices(
 
 
 # Chest x-ray dataset class
-
-
 class ChestXrayDataset(torch.utils.data.Dataset):
     """Unified dataset for chest X-ray images (CheXpert, NIH, VinDr-CXR).
 

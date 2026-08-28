@@ -76,15 +76,11 @@ class TTA(Method):
         """
         predictions, labels = self.inference(loader, enable_augmentation=True)
 
-        p_mean = torch.mean(predictions, dim=0)
-        aleatoric_uncertainty = -torch.sum(p_mean * torch.log(p_mean + self.eps), dim=1)
-
-        predictions_, _ = self.inference(loader, enable_augmentation=False, enable_dropout=True)
-
-        mean_pred = predictions_.mean(dim=0)
-        epistemic_uncertainty = -torch.sum(mean_pred * torch.log(mean_pred + self.eps), dim=1)
-
-        total_uncertainty = epistemic_uncertainty + aleatoric_uncertainty
+        p_mean = predictions.mean(dim=0)                                          # E_t[p(y|x,t)]
+        total_uncertainty    = -torch.sum(p_mean * torch.log(p_mean + self.eps), dim=1)           # H(E_t[p])
+        mean_entropy         = -torch.sum(predictions * torch.log(predictions + self.eps), dim=-1).mean(dim=0)  # E_t[H(p)]
+        aleatoric_uncertainty = mean_entropy
+        epistemic_uncertainty = total_uncertainty - aleatoric_uncertainty          # mutual information
 
         var_epistemic = predictions.var(dim=0).sum(dim=-1)  # [B, C] --> [B]
         var_aleatoric = (predictions * (1 - predictions)).mean(dim=0).sum(dim=-1)
@@ -94,7 +90,7 @@ class TTA(Method):
             "predictions": p_mean,
             "predicted_labels": predictions.argmax(dim=-1).mode(dim=0).values,
             "ground_truth": labels,
-            "total_uncertainty": aleatoric_uncertainty,
+            "total_uncertainty": total_uncertainty,
             "aleatoric_uncertainty": aleatoric_uncertainty,
             "epistemic_uncertainty": epistemic_uncertainty,
             "mutual_information": torch.zeros(total_uncertainty.size(0)),

@@ -22,7 +22,7 @@ list-experiments:
 # ── Main entry point ─────────────────────────────────────────────────────
 # Usage:
 #   make run-experiment DATASET=chexpert EXPERIMENT=chexpert_gender
-#   make run-experiment DATASET=chexpert EXPERIMENT=chexpert_age TRAIN_SUBSET=100 TEST_SUBSET=50
+#   make run-experiment DATASET=chexpert EXPERIMENT=chexpert_age METHOD=TTA TRAIN_SUBSET=100 TEST_SUBSET=50
 #   make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=mc_dropout
 #   make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=all_methods
 run-experiment:
@@ -64,16 +64,28 @@ run-mnist:
 
 # ── Quick chest experiments ───────────────────────────────────────────────
 # Usage:
-#   make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=all_methods TRAIN_SUBSET=100 TEST_SUBSET=50
-#   make run-chexpert EXPERIMENT=chexpert_age    MODEL=DenseNet METHOD=ddu         TRAIN_SUBSET=100 TEST_SUBSET=50
-#   make run-chexpert EXPERIMENT=chexpert_amb    MODEL=DenseNet METHOD=entropy     TRAIN_SUBSET=100 TEST_SUBSET=50
-#   make run-nih      EXPERIMENT=nih_gender      MODEL=DenseNet METHOD=all_methods TRAIN_SUBSET=100 TEST_SUBSET=50
-#   make run-nih      EXPERIMENT=nih_age         MODEL=DenseNet METHOD=mc_dropout  TRAIN_SUBSET=100 TEST_SUBSET=50
-#   make run-vin      EXPERIMENT=vin_amb         MODEL=DenseNet METHOD=entropy     TRAIN_SUBSET=100 TEST_SUBSET=50
+#   make run-chexpert     EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=all_methods TRAIN_SUBSET=100 TEST_SUBSET=50
+#   make run-chexpert     EXPERIMENT=chexpert_age    MODEL=DenseNet METHOD=ddu         TRAIN_SUBSET=100 TEST_SUBSET=50
+#   make run-chexpert-amb                            MODEL=DenseNet METHOD=entropy     TRAIN_SUBSET=100 TEST_SUBSET=50
+#   make run-nih          EXPERIMENT=nih_gender      MODEL=DenseNet METHOD=all_methods TRAIN_SUBSET=100 TEST_SUBSET=50
+#   make run-nih          EXPERIMENT=nih_age         MODEL=DenseNet METHOD=mc_dropout  TRAIN_SUBSET=100 TEST_SUBSET=50
+#   make run-vin          EXPERIMENT=vin_amb         MODEL=DenseNet METHOD=entropy     TRAIN_SUBSET=100 TEST_SUBSET=50
 run-chexpert:
 	$(PYTHON) -m src.experiments.run_experiment \
 		dataset=chexpert \
 		experiment=$(EXPERIMENT) \
+		model=$(MODEL) \
+		method=$(METHOD) \
+		optimizer=$(OPTIMIZER) \
+		dataset.train_subset=$(TRAIN_SUBSET) \
+		dataset.test_subset=$(TEST_SUBSET) \
+		$(ARGS)
+
+# Uses chexpert_amb dataset config (train.csv) so -1 uncertain labels are present
+run-chexpert-amb:
+	$(PYTHON) -m src.experiments.run_experiment \
+		dataset=chexpert_amb \
+		experiment=chexpert_amb \
 		model=$(MODEL) \
 		method=$(METHOD) \
 		optimizer=$(OPTIMIZER) \
