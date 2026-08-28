@@ -116,7 +116,7 @@ Experiments are organised by dataset:
 
 | Dataset | Experiment key | Description |
 |---|---|---|
-| ISIC | `isic_drop` | Dermatoscope dropout artefact |
+| ISIC | `isic_drop` | Water droplet artefact |
 | ISIC | `isic_hair` | Hair artefact |
 | ISIC | `isic_ink` | Ink marker artefact |
 | ISIC | `isic_age` | Patient age shift |
@@ -149,27 +149,37 @@ make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=all_methods  # run 
 **Dataset shortcuts** — use pre-set defaults for each dataset family:
 
 ```bash
-# ISIC examples (full dataset)
-make run-isic  EXPERIMENT=isic_drop      MODEL=EfficientNet       METHOD=all_methods
-make run-isic  EXPERIMENT=isic_hair      MODEL=EfficientNet       METHOD=mc_dropout
-make run-isic  EXPERIMENT=isic_ink       MODEL=EfficientNet       METHOD=entropy
-make run-isic  EXPERIMENT=isic_age       MODEL=EfficientNet       METHOD=all_methods
+# ISIC examples (full dataset)     
+make run-isic  EXPERIMENT=isic_ink             MODEL=EfficientNet       METHOD=all_methods
+make run-isic  EXPERIMENT=isic_drop            MODEL=EfficientNet       METHOD=all_methods
+make run-isic  EXPERIMENT=isic_hair            MODEL=EfficientNet       METHOD=all_methods
+make run-isic  EXPERIMENT=isic_age             MODEL=EfficientNet       METHOD=all_methods
+make run-isic  EXPERIMENT=isic_skin_tone       MODEL=EfficientNet       METHOD=all_methods
 
 # MNIST examples (full dataset)
-make run-mnist EXPERIMENT=mnist_blur     MODEL=mlp METHOD=all_methods   OPTIMIZER=sgd
-make run-mnist EXPERIMENT=mnist_fracture MODEL=mlp METHOD=all_methods   OPTIMIZER=sgd
-make run-mnist EXPERIMENT=mnist_thinning MODEL=mlp METHOD=mc_dropout    OPTIMIZER=sgd
+make run-mnist EXPERIMENT=mnist_blur     MODEL=mlp METHOD=all_methods       OPTIMIZER=sgd
+make run-mnist EXPERIMENT=mnist_fracture MODEL=mlp METHOD=all_methods       OPTIMIZER=sgd 
+make run-mnist EXPERIMENT=mnist_thinning MODEL=mlp METHOD=all_methods       OPTIMIZER=sgd 
 
 # CheXpert / NIH / VinDr examples (full dataset)
-make run-chexpert   EXPERIMENT=chexpert_gender    MODEL=DenseNet      METHOD=all_methods  OPTIMIZER=adam
-make run-chexpert   EXPERIMENT=chexpert_age       MODEL=DenseNet      METHOD=all_methods  OPTIMIZER=adam
-make run-chexpert   EXPERIMENT=chexpert_disease   MODEL=DenseNet      METHOD=all_methods  OPTIMIZER=adam
-make run-chexpert   EXPERIMENT=chexpert_amb       MODEL=DenseNet      METHOD=all_methods  OPTIMIZER=adam
-make run-chexpert   EXPERIMENT=chexpert_plain     MODEL=DenseNet      METHOD=all_methods  OPTIMIZER=adam
+make run-chexpert   EXPERIMENT=chexpert_gender    MODEL=DenseNet      METHOD=all_methods   OPTIMIZER=adam
+make run-chexpert   EXPERIMENT=chexpert_age       MODEL=DenseNet      METHOD=all_methods   OPTIMIZER=adam 
+make run-chexpert   EXPERIMENT=chexpert_disease   MODEL=DenseNet      METHOD=all_methods   OPTIMIZER=adam
+make run-chexpert   EXPERIMENT=chexpert_amb       MODEL=DenseNet      METHOD=all_methods   OPTIMIZER=adam 
+make run-chexpert   EXPERIMENT=chexpert_plain     MODEL=DenseNet      METHOD=all_methods   OPTIMIZER=adam
+
+make run-nih      EXPERIMENT=nih_gender           MODEL=DenseNet      METHOD=all_methods   OPTIMIZER=adam 
+make run-nih      EXPERIMENT=nih_age              MODEL=DenseNet      METHOD=all_methods   OPTIMIZER=adam 
+make run-nih      EXPERIMENT=nih_disease          MODEL=DenseNet      METHOD=all_methods   OPTIMIZER=adam 
+make run-nih      EXPERIMENT=nih_plain            MODEL=DenseNet      METHOD=all_methods   OPTIMIZER=adam 
+
+make run-vin      EXPERIMENT=vin_amb              MODEL=DenseNet      METHOD=all_methods   OPTIMIZER=adam 
+make run-vin      EXPERIMENT=vin_disease          MODEL=DenseNet      METHOD=all_methods   OPTIMIZER=adam 
+make run-vin      EXPERIMENT=vin_plain            MODEL=DenseNet      METHOD=all_methods   OPTIMIZER=adam 
 
 
-make run-nih      EXPERIMENT=nih_age         MODEL=DenseNet METHOD=mc_dropout   OPTIMIZER=adam TRAIN_SUBSET=50 TEST_SUBSET=10
-make run-vin      EXPERIMENT=vin_amb         MODEL=DenseNet METHOD=entropy      OPTIMIZER=adam
+
+
 
 # Run om a subset for quick iteration
 make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=mc_dropout  OPTIMIZER=adam TRAIN_SUBSET=50 TEST_SUBSET=10
