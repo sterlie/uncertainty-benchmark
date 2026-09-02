@@ -202,10 +202,9 @@ class HetXL(Method):
         with torch.no_grad():
             for inputs, targets in loader:
                 inputs = inputs.to(self.device)
-                targets = targets.to(self.device)
                 preds, variance = self.run_model(inputs, return_mean=False, return_variance=True)
                 preds = F.softmax(preds, dim=2)
-                predictions.append(preds)
+                predictions.append(preds.cpu())
                 labels.append(targets)
 
         predictions = torch.cat(predictions, dim=1)

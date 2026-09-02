@@ -57,7 +57,7 @@ class TTA(Method):
                 else:
                     output = F.softmax(output, dim=-1)
                 output = output.view(T, len(targets_), -1)
-                outputs.append(output)
+                outputs.append(output.cpu())
                 labels.append(targets_)
 
         predictions = torch.cat(outputs, dim=1)

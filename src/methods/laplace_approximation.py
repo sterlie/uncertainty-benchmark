@@ -140,8 +140,8 @@ class LaplaceApproximation(Method):
                 # apply sigmoid to get probabilities for multilabel uncertainty.
                 if self.is_multilabel:
                     pred = torch.sigmoid(pred)
-                predictions.append(pred)
-                labels.append(y_test.to(self.device))
+                predictions.append(pred.cpu())
+                labels.append(y_test)
             except Exception as e:
                 print(e)
                 # pass
