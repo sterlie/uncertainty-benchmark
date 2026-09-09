@@ -1,4 +1,4 @@
-import io, os, pickle
+import io, json, os, pickle
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -271,43 +271,132 @@ def plot_ood_auroc(experiment, u_type='total_uncertainty', save=True):
     plt.show()
 
 # ── Plot 4: Misclassification detection AUROC bar chart ──────────────────────
-def plot_misclassification_auroc(experiment, save=True):
-    """Bar chart — classification AUROC on the ID validation set per method."""
+def _method_dir(rd, m):
+    """Resolve a method's result dir case-insensitively (e.g. 'TTA' vs 'tta' on disk)."""
+    for cand in (m, m.lower(), m.upper()):
+        if (rd / cand).is_dir():
+            return rd / cand
+    return None
+
+
+def _amb_task_auroc_barplot(experiment, json_key, title, filename_prefix, save=True):
+    """Shared helper: bar chart of a single AUROC field from amb_task_performance.json per method."""
     if experiment not in results:
         print(f'{experiment} not available'); return
-    rd        = results[experiment]
-    available = [m for m in methods['total_uncertainty'] if (rd / m).is_dir()]
+    rd = results[experiment]
 
     rows = []
-    for m in available:
-        id_path = rd / m / 'valid_uncertainties.pkl'
-        if not id_path.exists():
+    for m in methods['total_uncertainty']:
+        mdir = _method_dir(rd, m)
+        if mdir is None:
             continue
-        data  = load_pkl(id_path)
-        gt    = _to_np(data['ground_truth'])
-        preds = np.asarray(data['predictions'].detach().cpu().numpy()
-                           if hasattr(data['predictions'], 'numpy') else data['predictions'])
-        if preds.ndim == 3:
-            preds = preds.mean(axis=0)
-        n_classes = preds.shape[1] if preds.ndim > 1 else 2
-        try:
-            auroc = (roc_auc_score(gt, preds[:, 1]) if n_classes == 2
-                     else roc_auc_score(gt, preds, multi_class='ovr'))
-        except Exception as e:
-            print(f'{m}: {e}'); auroc = float('nan')
+        perf_path = mdir / 'amb_task_performance.json'
+        if not perf_path.exists():
+            continue
+        with open(perf_path) as f:
+            perf = json.load(f)
+        auroc = perf.get(json_key, float('nan'))
         rows.append({'Method': legend_map.get(m, m), 'AUROC': auroc})
+
+    if not rows:
+        print(f'No amb_task_performance.json results found for {experiment}'); return
 
     res = pd.DataFrame(rows)
     fig, ax = plt.subplots(figsize=(10, 5))
     sns.barplot(x='Method', y='AUROC', data=res, palette=palette_dict, ax=ax)
-    ax.set_ylim(0.4, 1.0)
+    ymin = min(0.4, max(0.0, res['AUROC'].min() - 0.05))
+    ax.set_ylim(ymin, 1.0)
     ax.set_ylabel('AUROC')
-    ax.set_title(f'{experiment}  —  Misclassification detection (total uncertainty)')
+    ax.set_title(f'{experiment}  —  {title}')
     ax.tick_params(axis='x', rotation=15)
     plt.tight_layout()
     if save:
-        _save(fig, f'misclassification_auroc_{experiment}.pdf')
+        _save(fig, f'{filename_prefix}_{experiment}.pdf')
     plt.show()
+
+
+def plot_misclassification_auroc(experiment, save=True):
+    """Bar chart — AUROC of total uncertainty for detecting misclassified predictions
+    among non-ambiguous (clear) samples, per method."""
+    _amb_task_auroc_barplot(
+        experiment,
+        json_key='miscls_auroc_total_uncertainty',
+        title='Misclassification detection on clear samples (total uncertainty)',
+        filename_prefix='misclassification_auroc',
+        save=save,
+    )
+
+
+def plot_ambiguity_auroc(experiment, save=True):
+    """Bar chart — AUROC of total uncertainty for detecting ambiguous vs clear samples, per method."""
+    _amb_task_auroc_barplot(
+        experiment,
+        json_key='amb_auroc_total_uncertainty',
+        title='Ambiguity detection (total uncertainty)',
+        filename_prefix='ambiguity_auroc',
+        save=save,
+    )
+
+
+def _amb_task_auroc_compare_barplot(exp1, exp2, json_key, title, filename_prefix, save=True):
+    """Shared helper: grouped bar chart comparing an amb_task AUROC field across two experiments."""
+    rows = []
+    for exp in (exp1, exp2):
+        if exp not in results:
+            print(f'{exp} not available'); continue
+        rd = results[exp]
+        for m in methods['total_uncertainty']:
+            mdir = _method_dir(rd, m)
+            if mdir is None:
+                continue
+            perf_path = mdir / 'amb_task_performance.json'
+            if not perf_path.exists():
+                continue
+            with open(perf_path) as f:
+                perf = json.load(f)
+            auroc = perf.get(json_key, float('nan'))
+            rows.append({'Method': legend_map.get(m, m), 'Experiment': exp, 'AUROC': auroc})
+
+    if not rows:
+        print(f'No amb_task_performance.json results found for {exp1} / {exp2}'); return
+
+    res = pd.DataFrame(rows)
+    fig, ax = plt.subplots(figsize=(12, 5))
+    sns.barplot(x='Method', y='AUROC', hue='Experiment', data=res, ax=ax)
+    ymin = min(0.4, max(0.0, res['AUROC'].min() - 0.05))
+    ax.set_ylim(ymin, 1.0)
+    ax.set_ylabel('AUROC')
+    ax.set_title(title)
+    ax.tick_params(axis='x', rotation=15)
+    ax.legend(title='Dataset')
+    plt.tight_layout()
+    if save:
+        _save(fig, f'{filename_prefix}_{exp1}_vs_{exp2}.pdf')
+    plt.show()
+
+
+def plot_misclassification_auroc_compare(exp1, exp2, save=True):
+    """Grouped bar chart — misclassification-detection AUROC (total uncertainty), per method,
+    comparing two experiments side by side (e.g. 'vin_amb' vs 'chexpert_amb')."""
+    _amb_task_auroc_compare_barplot(
+        exp1, exp2,
+        json_key='miscls_auroc_aleatoric_uncertainty',
+        title=f'{exp1} vs {exp2}  —  Misclassification detection on clear samples (Aleatoric uncertainty)',
+        filename_prefix='misclassification_auroc_compare',
+        save=save,
+    )
+
+
+def plot_ambiguity_auroc_compare(exp1, exp2, save=True):
+    """Grouped bar chart — ambiguity-detection AUROC (total uncertainty), per method,
+    comparing two experiments side by side (e.g. 'vin_amb' vs 'chexpert_amb')."""
+    _amb_task_auroc_compare_barplot(
+        exp1, exp2,
+        json_key='amb_auroc_total_uncertainty',
+        title=f'{exp1} vs {exp2}  —  Ambiguity detection (total uncertainty)',
+        filename_prefix='ambiguity_auroc_compare',
+        save=save,
+    )
 
 
 # ── Plot 5: All methods combined — 1×3 (one panel per uncertainty type) ───────

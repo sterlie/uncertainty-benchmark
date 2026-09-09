@@ -166,20 +166,10 @@ def run_ambiguous_uncertainty_task(
         _plot_amb_distributions(results, amb_targets, plot_dir, prefix="amb")
         performance = _eval_amb_detection(results, amb_targets, performance, prefix="amb")
 
-    clear_mask = (amb_targets == 0)
-    clear_mask = clear_mask.detach().cpu()
-    
-    if clear_mask.sum() > 0:
-        preds_clear = (all_predictions[clear_mask] > 0.5)
-        true_clear = (all_targets[clear_mask] == 1)
-        miscls_targets = (preds_clear != true_clear).any(dim=-1).long()
-        miscls_results = [{
-            k: v[clear_mask] if isinstance(v, torch.Tensor) and v.shape[0] == len(all_targets) else v
-            for k, v in r.items()
-        } for r in results]
-        print(f"Misclassification: {miscls_targets.sum().item()} / {clear_mask.sum().item()}")
-        _plot_amb_distributions(miscls_results, miscls_targets.detach(), plot_dir, prefix="miscls")
-        performance = _eval_amb_detection(miscls_results, miscls_targets, performance, prefix="miscls")
+    miscls_targets = ((all_predictions > 0.5) != (all_targets == 1)).any(dim=-1).long()
+    print(f"Misclassification: {int(miscls_targets.sum().item())} / {len(all_targets)}")
+    _plot_amb_distributions(results, miscls_targets.detach(), plot_dir, prefix="miscls")
+    performance = _eval_amb_detection(results, miscls_targets, performance, prefix="miscls")
 
     with open(result_dir / "amb_task_performance.json", "w") as f:
         json.dump(performance, f, indent=4)
