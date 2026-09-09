@@ -44,9 +44,10 @@ ORDERS = {
     'nih_gender':       ['Male', 'Female'],
 
     # CHEXPERT
-    'chexpert_age':     ['age_group_0', 'age_group_1', 'age_group_2'],
+    'chexpert_age':     ['age_0', 'age_10', 'age_20', 'age_30', 'age_40', 'age_50', 'age_60', 'age_70', 'age_80', 'age_90'],
     'chexpert_disease': [f'disease_{i}' for i in range(7)],
     'chexpert_gender':  ['Male', 'Female'],
+
 
     # VIN
     'vin_disease':      [f'disease_{i}' for i in range(7)],
