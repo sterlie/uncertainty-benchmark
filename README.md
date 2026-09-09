@@ -86,8 +86,9 @@ pip install -e swa_gaussian/
 List all registered UQ methods:
 
 ```bash
-ç
+make list-methods
 ```
+
 
 The available methods are:
 
@@ -95,7 +96,7 @@ The available methods are:
 |---|---|
 | Baseline entropy | `entropy` |
 | MC Dropout | `mc_dropout` |
-| Test-Time Augmentation | `TTA` |
+| Test-Time Augmentation | `tta` |
 | Deep Deterministic Uncertainty | `ddu` |
 | Deep Ensemble | `ensemble` |
 | Heteroscedastic XL | `het_xl` |
@@ -178,9 +179,6 @@ make run-vin      EXPERIMENT=vin_disease          MODEL=DenseNet      METHOD=all
 make run-vin      EXPERIMENT=vin_plain            MODEL=DenseNet      METHOD=all_methods   OPTIMIZER=adam 
 
 
-
-
-
 # Run om a subset for quick iteration
 make run-chexpert EXPERIMENT=chexpert_gender MODEL=DenseNet METHOD=mc_dropout  OPTIMIZER=adam TRAIN_SUBSET=50 TEST_SUBSET=10
 ```
@@ -199,6 +197,11 @@ Any Hydra config key can also be overridden directly via `ARGS`:
 ```bash
 make run-chexpert EXPERIMENT=chexpert_gender ARGS="experiment.lr=1e-4"
 ```
+
+## Visualise results 
+
+The notebook src/notebook_results.ipynb includes a walktrough to generate plots of the results. 
+
 
 ## Citation 
 

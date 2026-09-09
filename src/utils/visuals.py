@@ -316,23 +316,24 @@ def _amb_task_auroc_barplot(experiment, json_key, title, filename_prefix, save=T
 
 
 def plot_misclassification_auroc(experiment, save=True):
-    """Bar chart — AUROC of total uncertainty for detecting misclassified predictions
-    among non-ambiguous (clear) samples, per method."""
+    """Bar chart — AUROC of total predictive uncertainty for detecting misclassifications
+    of the underlying model, per method."""
     _amb_task_auroc_barplot(
         experiment,
         json_key='miscls_auroc_total_uncertainty',
-        title='Misclassification detection on clear samples (total uncertainty)',
+        title='Misclassification detection (total uncertainty)',
         filename_prefix='misclassification_auroc',
         save=save,
     )
 
 
 def plot_ambiguity_auroc(experiment, save=True):
-    """Bar chart — AUROC of total uncertainty for detecting ambiguous vs clear samples, per method."""
+    """Bar chart — AUROC of aleatoric uncertainty for detecting subjects with uncertain
+    labels / multi-rater disagreement, per method."""
     _amb_task_auroc_barplot(
         experiment,
-        json_key='amb_auroc_total_uncertainty',
-        title='Ambiguity detection (total uncertainty)',
+        json_key='amb_auroc_aleatoric_uncertainty',
+        title='Ambiguity detection (aleatoric uncertainty)',
         filename_prefix='ambiguity_auroc',
         save=save,
     )
@@ -376,24 +377,24 @@ def _amb_task_auroc_compare_barplot(exp1, exp2, json_key, title, filename_prefix
 
 
 def plot_misclassification_auroc_compare(exp1, exp2, save=True):
-    """Grouped bar chart — misclassification-detection AUROC (total uncertainty), per method,
-    comparing two experiments side by side (e.g. 'vin_amb' vs 'chexpert_amb')."""
+    """Grouped bar chart — misclassification-detection AUROC (total predictive uncertainty),
+    per method, comparing two experiments side by side ('vin_amb' vs 'chexpert_amb')."""
     _amb_task_auroc_compare_barplot(
         exp1, exp2,
-        json_key='miscls_auroc_aleatoric_uncertainty',
-        title=f'{exp1} vs {exp2}  —  Misclassification detection on clear samples (Aleatoric uncertainty)',
+        json_key='miscls_auroc_total_uncertainty',
+        title=f'{exp1} vs {exp2}  —  Misclassification detection (total uncertainty)',
         filename_prefix='misclassification_auroc_compare',
         save=save,
     )
 
 
 def plot_ambiguity_auroc_compare(exp1, exp2, save=True):
-    """Grouped bar chart — ambiguity-detection AUROC (total uncertainty), per method,
-    comparing two experiments side by side (e.g. 'vin_amb' vs 'chexpert_amb')."""
+    """Grouped bar chart — ambiguity-detection AUROC (aleatoric uncertainty), per method,
+    comparing two experiments side by side ('vin_amb' vs 'chexpert_amb')."""
     _amb_task_auroc_compare_barplot(
         exp1, exp2,
-        json_key='amb_auroc_total_uncertainty',
-        title=f'{exp1} vs {exp2}  —  Ambiguity detection (total uncertainty)',
+        json_key='amb_auroc_aleatoric_uncertainty',
+        title=f'{exp1} vs {exp2}  —  Ambiguity detection (aleatoric uncertainty)',
         filename_prefix='ambiguity_auroc_compare',
         save=save,
     )

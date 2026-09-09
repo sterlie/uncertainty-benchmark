@@ -10,7 +10,7 @@ MODEL        ?= mlp
 TRAIN_SUBSET ?= null
 TEST_SUBSET  ?= null
 METHOD       ?= tta
-OPTIMIZER    ?= sgd_derma
+OPTIMIZER    ?= sgd_derma 
 
 # ── Utilities ─────────────────────────────────────────────────────────────
 list-methods:
@@ -22,7 +22,7 @@ list-experiments:
 # ── Main entry point ─────────────────────────────────────────────────────
 # Usage:
 #   make run-experiment DATASET=chexpert EXPERIMENT=chexpert_gender
-#   make run-experiment DATASET=chexpert EXPERIMENT=chexpert_age METHOD=TTA TRAIN_SUBSET=100 TEST_SUBSET=50
+#   make run-experiment DATASET=chexpert EXPERIMENT=chexpert_age METHOD=tta TRAIN_SUBSET=100 TEST_SUBSET=50
 #   make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=mc_dropout
 #   make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=all_methods
 run-experiment:
