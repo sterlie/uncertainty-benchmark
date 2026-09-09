@@ -1,5 +1,7 @@
 name: "tta"
-sample_size: 1000  # Number of MC samples for uncertainty estimation
+sample_size: 1000 # Number of MC samples for uncertainty estimation
+
+  
 augmentation:
   _type: Compose
   transforms:
@@ -15,4 +17,4 @@ augmentation:
     - _type: GaussianNoise
       mean: 0
       sigma: 0.1
-      clip: true
+      clip: True
