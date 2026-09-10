@@ -1,5 +1,5 @@
 name: chexpert
-batch_size: 64
+batch_size: 16
 num_classes: 12
 channels: 3
 image_size: 224
