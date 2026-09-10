@@ -45,6 +45,27 @@ def plot_uncertainty_line_plot(
     fig.suptitle(plot_title, y=0.03)
     return fig
 
+
+def roc_simple(id_scores, ood_scores, plot_title: str = "ROC Curve"):
+    """ROC curve for a single pair of id / ood score arrays (or tensors)."""
+    if isinstance(id_scores, torch.Tensor):
+        id_scores = id_scores.detach().cpu().numpy()
+    if isinstance(ood_scores, torch.Tensor):
+        ood_scores = ood_scores.detach().cpu().numpy()
+    true_labels = np.concatenate([np.zeros_like(id_scores), np.ones_like(ood_scores)])
+    scores = np.concatenate([id_scores, ood_scores])
+    fpr, tpr, _ = roc_curve(true_labels, scores)
+    auroc = roc_auc_score(true_labels, scores)
+    fig, ax = plt.subplots()
+    ax.plot(fpr, tpr, label=f"AUROC={auroc:.3f}")
+    ax.plot([0, 1], [0, 1], "--", color="gray")
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.legend()
+    ax.set_title(plot_title.replace("_", " "))
+    return fig
+
+
 def entropy(id: torch.tensor, ood: dict, kde=True):
     res = pd.DataFrame()
     if id is not None:
