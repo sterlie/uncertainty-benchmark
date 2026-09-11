@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 
 from src.methods.method import Method
 from src.methods.method_factory import register_method
+from src.methods.utils import multi_class_uncertainty, multi_label_uncertainty
 from src.models.model_factory import ModelFactory
 
 
@@ -23,6 +24,9 @@ class Ensemble(Method):
     def __init__(self, config):
         self.sample_size = config.method.get('sample_size', 1)
         super(Ensemble, self).__init__(config)
+        self.uncertainty_per_class = bool(
+            config.method.get('uncertainty_per_class', config.dataset.get('uncertainty_per_class', False))
+        )
         self.model_dir = config.method.name
         self.ood_threshold = config.method.get('ood_threshold', 1.0)
         self.misclassify_threshold = config.method.get('misclassify_threshold', self.ood_threshold)
@@ -141,7 +145,7 @@ class Ensemble(Method):
         """
 
         # Setup optimizer
-        criterion = nn.CrossEntropyLoss(loss_weight)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=loss_weight) if self.is_multilabel else nn.CrossEntropyLoss(loss_weight)
 
         # Training
         epochs = self.config.optimizer.get('epochs', 10)
@@ -154,6 +158,10 @@ class Ensemble(Method):
 
             for batch_idx, (inputs, targets) in enumerate(train_loader):
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
+                if self.is_multilabel:
+                    targets = targets.float()
+                else:
+                    targets = targets.squeeze(1).long() if targets.ndim == 2 else targets.long()
 
                 for model, optimizer in zip(self.model, self.optimizer):
                     optimizer.zero_grad()
@@ -162,10 +170,14 @@ class Ensemble(Method):
                     loss.backward()
                     optimizer.step()
                     total_loss += loss.item() / self.sample_size
-                    total_correct += (outputs.argmax(1) == targets).sum().item() / self.sample_size
+                    if self.is_multilabel:
+                        total_correct += ((outputs > 0).float() == targets).sum().item() / self.sample_size
+                    else:
+                        total_correct += (outputs.argmax(1) == targets).sum().item() / self.sample_size
 
             avg_loss = total_loss / len(train_loader)
-            print(f'Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}, Accuracy: {total_correct / len(train_loader.dataset):.4f}')
+            denom = len(train_loader.dataset) * (self.num_classes if self.is_multilabel else 1)
+            print(f'Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}, Accuracy: {total_correct / denom:.4f}')
 
         # Evaluation
         for model in self.model:
@@ -175,14 +187,22 @@ class Ensemble(Method):
         with torch.no_grad():
             for batch_idx, (inputs, targets) in enumerate(valid_loader):
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
+                if self.is_multilabel:
+                    targets = targets.float()
+                else:
+                    targets = targets.squeeze(1).long() if targets.ndim == 2 else targets.long()
                 for model in self.model:
                     outputs = model(inputs)
                     loss = criterion(outputs, targets)
                     total_loss += loss.item() / self.sample_size
-                    total_correct += (outputs.argmax(1) == targets).sum().item() / self.sample_size
+                    if self.is_multilabel:
+                        total_correct += ((outputs > 0).float() == targets).sum().item() / self.sample_size
+                    else:
+                        total_correct += (outputs.argmax(1) == targets).sum().item() / self.sample_size
 
         avg_loss = total_loss / len(valid_loader)
-        print(f'Test Loss: {avg_loss:.4f}, Accuracy: {total_correct / len(valid_loader.dataset):.4f}')
+        denom = len(valid_loader.dataset) * (self.num_classes if self.is_multilabel else 1)
+        print(f'Test Loss: {avg_loss:.4f}, Accuracy: {total_correct / denom:.4f}')
 
     def predict(self, inputs: torch.Tensor):
         """Make predictions in a conventional manner.
@@ -225,16 +245,30 @@ class Ensemble(Method):
 
         with torch.no_grad():
             all_logits = torch.stack([model(inputs) for model in self.model])
-            all_probs = F.softmax(all_logits, dim=-1)
+            all_probs = torch.sigmoid(all_logits) if self.is_multilabel else F.softmax(all_logits, dim=-1)
 
             predictive_probs = all_probs.mean(dim=0)
-            predictive_entropy = -torch.sum(predictive_probs * torch.log(predictive_probs + self.eps), axis=-1)
-            expected_entropy = -torch.mean(torch.sum(all_probs * torch.log(all_probs + self.eps), axis=-1), dim=0)
-            epistemic = predictive_entropy - expected_entropy
-            mutual_information = (all_probs * (torch.log(all_probs + self.eps) - torch.log(all_probs + self.eps))).sum(dim=2).mean(
-                dim=0)  # [N]
-            ood_score = predictive_entropy
-            misclassify_score = predictive_entropy
+            if self.is_multilabel:
+                total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_label_uncertainty(
+                    all_probs,
+                    predictive_probs,
+                    reduction=not self.uncertainty_per_class,
+                    sigmoid=False,
+                    eps=self.eps,
+                )
+                mutual_information = epistemic_uncertainty
+            else:
+                total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_class_uncertainty(
+                    all_probs,
+                    predictive_probs,
+                    self.eps,
+                )
+                mutual_information = (
+                    all_probs * (torch.log(all_probs + self.eps) - torch.log(predictive_probs.unsqueeze(0) + self.eps))
+                ).sum(dim=2).mean(dim=0)
+
+            ood_score = total_uncertainty
+            misclassify_score = total_uncertainty
 
             var_epistemic = all_probs.var(dim=0).sum(dim=-1)  # [B, C] --> [B]
             var_aleatoric = (all_probs * (1 - all_probs)).mean(dim=0).sum(dim=-1)
@@ -242,13 +276,16 @@ class Ensemble(Method):
 
         return {
             "predictions": predictive_probs,
-            "predicted_labels": predictive_probs.argmax(dim=-1),
+            "predicted_labels": (predictive_probs > 0.5).long() if self.is_multilabel else predictive_probs.argmax(dim=-1),
             "ground_truth": targets,
-            "total_uncertainty": predictive_entropy,
-            "aleatoric_uncertainty": expected_entropy,
-            "epistemic_uncertainty": epistemic,
+            "total_uncertainty": total_uncertainty,
+            "aleatoric_uncertainty": aleatoric_uncertainty,
+            "epistemic_uncertainty": epistemic_uncertainty,
             "mutual_information": mutual_information,
             "variance_epistemic_uncertainty": var_epistemic,
             "variance_aleatoric_uncertainty": var_aleatoric,
             "variance_total_uncertainty": var_total,
+            "out_of_distribution": ood_score,
+            "misclassification": misclassify_score,
+            "ambiguous": aleatoric_uncertainty,
         }
