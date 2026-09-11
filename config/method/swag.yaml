@@ -8,4 +8,4 @@ ood_threshold: 0.10
 misclassify_threshold: 0.35
 train_lr: 10.0
 swag:
-	swa_start: 6
+  swa_start: 6
