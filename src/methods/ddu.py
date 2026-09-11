@@ -393,7 +393,9 @@ class DDU(Method):
             aleatoric_uncertainty = -aleatoric_uncertainty
             epistemic_uncertainty = -epistemic_uncertainty
         elif self.uncertainty == 'entropy' and self.is_multilabel:
-            epistemic_uncertainty = -logsumexp(logits_feat, multi_label=True, reduction=reduction)[:, :self.num_classes]
+            epistemic_uncertainty = -logsumexp(logits_feat, multi_label=True, reduction=reduction)
+            if self.uncertainty_per_class and epistemic_uncertainty.ndim == 2:
+                epistemic_uncertainty = epistemic_uncertainty[:, :self.num_classes]
             total_uncertainty = aleatoric_uncertainty + epistemic_uncertainty
 
         ood_score = total_uncertainty
