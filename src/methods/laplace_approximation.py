@@ -38,6 +38,7 @@ class LaplaceApproximation(Method):
     def __init__(self, config):
         super(LaplaceApproximation, self).__init__(config)
         self.laplace = None
+        self.laplace_likelihood = None
         self.la_batch_size = config.method.get('la_batch_size', 4)
         self.train_size = config.method.get('train_size', 1000)
         self.val_size = config.method.get('val_size', config.method.get('test_size', 100))
@@ -56,6 +57,29 @@ class LaplaceApproximation(Method):
     def _likelihood(self):
         return "binary" if self.is_multilabel else "classification"
 
+    def _init_laplace(self, likelihood: str | None = None):
+        requested_likelihood = likelihood or self._likelihood()
+        try:
+            self.laplace = Laplace(
+                self.model,
+                requested_likelihood,
+                self.config.method.subset_of_weights,
+                self.config.method.hessian_structure,
+            )
+            self.laplace_likelihood = requested_likelihood
+            return self.laplace
+        except ValueError as error:
+            if self.is_multilabel and requested_likelihood == "binary" and "Invalid likelihood type binary" in str(error):
+                self.laplace = Laplace(
+                    self.model,
+                    "regression",
+                    self.config.method.subset_of_weights,
+                    self.config.method.hessian_structure,
+                )
+                self.laplace_likelihood = "regression"
+                return self.laplace
+            raise
+
     def train_model(self, train_loader, val_loader, **kwargs):
         """Train the base model and then fit Laplace approximation."""
         # Train the base model
@@ -71,14 +95,9 @@ class LaplaceApproximation(Method):
         laplace_path = path.replace('.pt', '_laplace.pt')
         if os.path.exists(laplace_path):
             self.model.eval()
-            likelihood = self._likelihood()
-            self.laplace = Laplace(
-                self.model,
-                likelihood,
-                self.config.method.subset_of_weights,
-                self.config.method.hessian_structure,
-            )
             checkpoint = torch.load(laplace_path, weights_only=True, map_location=self.device)
+            likelihood = checkpoint.get("laplace_config", {}).get("likelihood", self._likelihood())
+            self._init_laplace(likelihood)
             self.laplace.load_state_dict(checkpoint["laplace_state_dict"])
             self.laplace.prior_precision = checkpoint["laplace_config"]["prior_precision"]
             self.laplace.temperature = checkpoint["laplace_config"]["temperature"]
@@ -101,6 +120,7 @@ class LaplaceApproximation(Method):
                 "laplace_config": {
                     "prior_precision": self.laplace.prior_precision,
                     "temperature": self.laplace.temperature,
+                    "likelihood": self.laplace_likelihood,
                 },
             }
             torch.save(checkpoint, laplace_path)
@@ -108,13 +128,17 @@ class LaplaceApproximation(Method):
 
     def train_uncertainty_method(self, train_loader, val_loader):
         self.model.eval()
-        likelihood = self._likelihood()
 
         train_size = min(self.train_size, len(train_loader.dataset))
         val_size = min(self.val_size, len(val_loader.dataset))
 
         train_dataset = train_loader.dataset
         val_dataset = val_loader.dataset
+
+        self._init_laplace()
+        if self.laplace_likelihood == "regression":
+            train_dataset = RegressionDataset(train_dataset)
+            val_dataset = RegressionDataset(val_dataset)
 
         la_train_loader = DataLoader(
             Subset(train_dataset, range(train_size)),
@@ -125,11 +149,6 @@ class LaplaceApproximation(Method):
             batch_size=self.la_batch_size, shuffle=False,
         )
 
-        self.laplace = Laplace(
-            self.model, likelihood,
-            self.config.method.subset_of_weights,
-            self.config.method.hessian_structure,
-        )
         self.laplace.fit(la_train_loader)
         self.laplace.optimize_prior_precision(
             method=self.config.method.get('optimization_method', 'gridsearch'),
@@ -145,11 +164,17 @@ class LaplaceApproximation(Method):
         labels = []
         for x_test, y_test in tqdm(loader):
             try:
-                pred = self.laplace.predictive_samples(
-                    x_test.to(self.device),
-                    pred_type=self._prediction_type(),
-                    n_samples=self._sample_size(),
-                )
+                if self.laplace_likelihood == "regression":
+                    pred = self.laplace.predictive_samples(
+                        x_test.to(self.device),
+                        n_samples=self._sample_size(),
+                    )
+                else:
+                    pred = self.laplace.predictive_samples(
+                        x_test.to(self.device),
+                        pred_type=self._prediction_type(),
+                        n_samples=self._sample_size(),
+                    )
                 predictions.append(pred.cpu())
                 labels.append(y_test)
             except Exception as e:
@@ -163,17 +188,23 @@ class LaplaceApproximation(Method):
         predictions, ground_truth = self.inference(loader)
         predictions = predictions.to(self.device)
         ground_truth = ground_truth.to(self.device)
-        mean_prediction = predictions.mean(dim=0)
 
         if self.is_multilabel:
+            if self.laplace_likelihood == "regression":
+                mean_prediction = torch.sigmoid(predictions).mean(dim=0)
+                sigmoid = True
+            else:
+                mean_prediction = predictions.mean(dim=0)
+                sigmoid = False
             total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_label_uncertainty(
                 predictions,
                 mean_prediction,
                 reduction=not bool(self.config.dataset.get('uncertainty_per_class', False)),
-                sigmoid=False,
+                sigmoid=sigmoid,
                 eps=self.eps,
             )
         else:
+            mean_prediction = predictions.mean(dim=0)
             total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_class_uncertainty(
                 predictions,
                 mean_prediction,
