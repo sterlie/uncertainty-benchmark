@@ -29,6 +29,8 @@ class Swag(Method):
         self.sub_population = config.method.get('sub_population', 1.0)
         self.scale = config.method.get('scale', 0.1)
         self.swag_batch_size = config.method.get('swag_batch_size', 64)
+        self.ood_threshold = config.method.get('ood_threshold', 0.0)
+        self.misclassify_threshold = config.method.get('misclassify_threshold', self.ood_threshold)
         self.uncertainty_per_class = config.method.get('uncertainty_per_class', False)
         self.train_loader = None
         self.model_dir = "swag"
@@ -50,9 +52,13 @@ class Swag(Method):
         arguments.pop("name", None)
         arguments.pop("epochs", None)
         scheduler_arguments = arguments.pop("scheduler", None)
+        train_lr = self.config.method.get(
+            "train_lr",
+            arguments["lr"] * self.config.method.get("lr_increase_factor", 1.0),
+        )
         self.optimizer = torch.optim.SGD(
             self.model.parameters(),
-            lr=arguments["lr"] * self.config.method.lr_increase_factor,
+            lr=train_lr,
             weight_decay=arguments.get("weight_decay", 0.0),
             momentum=arguments.get("momentum", 0.9),
         )
@@ -278,7 +284,7 @@ class Swag(Method):
 
         sgd_ens_preds = None
         n_ensembled = 0.0
-        swa_start = self.config.method.swa_start
+        swa_start = int(self.config.method.swag.swa_start)
 
         for epoch in range(self.config.method.epochs):
             train_res = self.train_epoch(train_loader, criterion)
@@ -329,12 +335,11 @@ class Swag(Method):
         else:
             labels = torch.zeros(n_data)
 
-        sub_size = int(len(self.train_loader.dataset) * self.sub_population)
+        sub_size = max(1, int(len(self.train_loader.dataset) * self.sub_population))
         indices = torch.randperm(len(self.train_loader.dataset))[:sub_size]
         sub_loader = DataLoader(
             Subset(self.train_loader.dataset, indices),
             batch_size=self.swag_batch_size, shuffle=True,
-            drop_last=True,
         )
 
         for i in range(n_samples):

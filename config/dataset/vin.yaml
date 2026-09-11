@@ -49,9 +49,6 @@ chosen_disease: null
 # Only by_disease_count is meaningful; use plain for simple evaluation
 population_division: by_disease_count
 alternate_population_division: null
-# Restrict train/val to specific subgroup values (null = all subgroups).
-# E.g. [0] trains only on low-disease-count patients.
-train_subgroups: null
 
 disease_count_threshold: 2
 

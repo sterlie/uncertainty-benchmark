@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader, Subset
 
 from src.methods import register_method
 from src.methods.method import Method
+from src.methods.utils import multi_label_uncertainty, multi_class_uncertainty
 
 
 class RegressionDataset(torch.utils.data.Dataset):
@@ -39,7 +40,21 @@ class LaplaceApproximation(Method):
         self.laplace = None
         self.la_batch_size = config.method.get('la_batch_size', 4)
         self.train_size = config.method.get('train_size', 1000)
-        self.val_size = config.method.get('val_size', 100)
+        self.val_size = config.method.get('val_size', config.method.get('test_size', 100))
+        self.ood_threshold = config.method.get('ood_threshold', 0.0)
+        self.misclassify_threshold = config.method.get('misclassify_threshold', self.ood_threshold)
+
+    def _prediction_type(self):
+        return self.config.method.get('pred_type', self.config.method.get('prediction_type', 'glm'))
+
+    def _link_approximation(self):
+        return self.config.method.get('link_approx', self.config.method.get('link_approximation', 'mc'))
+
+    def _sample_size(self):
+        return int(self.config.method.get('num_samples', self.config.method.get('sample_size', 100)))
+
+    def _likelihood(self):
+        return "binary" if self.is_multilabel else "classification"
 
     def train_model(self, train_loader, val_loader, **kwargs):
         """Train the base model and then fit Laplace approximation."""
@@ -56,7 +71,7 @@ class LaplaceApproximation(Method):
         laplace_path = path.replace('.pt', '_laplace.pt')
         if os.path.exists(laplace_path):
             self.model.eval()
-            likelihood = "regression" if self.is_multilabel else "classification"
+            likelihood = self._likelihood()
             self.laplace = Laplace(
                 self.model,
                 likelihood,
@@ -93,17 +108,13 @@ class LaplaceApproximation(Method):
 
     def train_uncertainty_method(self, train_loader, val_loader):
         self.model.eval()
-        likelihood = "regression" if self.is_multilabel else "classification"
+        likelihood = self._likelihood()
 
         train_size = min(self.train_size, len(train_loader.dataset))
         val_size = min(self.val_size, len(val_loader.dataset))
 
-        if self.is_multilabel:
-            train_dataset = RegressionDataset(train_loader.dataset)
-            val_dataset = RegressionDataset(val_loader.dataset)
-        else:
-            train_dataset = train_loader.dataset
-            val_dataset = val_loader.dataset
+        train_dataset = train_loader.dataset
+        val_dataset = val_loader.dataset
 
         la_train_loader = DataLoader(
             Subset(train_dataset, range(train_size)),
@@ -122,8 +133,8 @@ class LaplaceApproximation(Method):
         self.laplace.fit(la_train_loader)
         self.laplace.optimize_prior_precision(
             method=self.config.method.get('optimization_method', 'gridsearch'),
-            pred_type=self.config.method.get('pred_type', 'glm'),
-            link_approx=self.config.method.get('link_approx', 'mc'),
+            pred_type=self._prediction_type(),
+            link_approx=self._link_approximation(),
             val_loader=la_val_loader,
         )
 
@@ -134,18 +145,49 @@ class LaplaceApproximation(Method):
         labels = []
         for x_test, y_test in tqdm(loader):
             try:
-                # User-specified predictive approx.Laplace Redux – Effortless Bayesian Deep Learning
-                pred = self.laplace.predictive_samples(x_test.to(self.device), n_samples=self.config.method.num_samples)
-                # regression likelihood returns raw Gaussian samples in logit space;
-                # apply sigmoid to get probabilities for multilabel uncertainty.
-                if self.is_multilabel:
-                    pred = torch.sigmoid(pred)
+                pred = self.laplace.predictive_samples(
+                    x_test.to(self.device),
+                    pred_type=self._prediction_type(),
+                    n_samples=self._sample_size(),
+                )
                 predictions.append(pred.cpu())
                 labels.append(y_test)
             except Exception as e:
                 print(e)
-                # pass
 
         predictions = torch.cat(predictions, dim=1)
         labels = torch.cat(labels, dim=0)
         return predictions, labels
+
+    def measure_uncertainty(self, loader: torch.utils.data.DataLoader):
+        predictions, ground_truth = self.inference(loader)
+        predictions = predictions.to(self.device)
+        ground_truth = ground_truth.to(self.device)
+        mean_prediction = predictions.mean(dim=0)
+
+        if self.is_multilabel:
+            total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_label_uncertainty(
+                predictions,
+                mean_prediction,
+                reduction=not bool(self.config.dataset.get('uncertainty_per_class', False)),
+                sigmoid=False,
+                eps=self.eps,
+            )
+        else:
+            total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_class_uncertainty(
+                predictions,
+                mean_prediction,
+                self.eps,
+            )
+
+        return {
+            "predictions": mean_prediction,
+            "predicted_labels": (mean_prediction > 0.5).long() if self.is_multilabel else mean_prediction.argmax(dim=-1),
+            "ground_truth": ground_truth,
+            "total_uncertainty": total_uncertainty,
+            "aleatoric_uncertainty": aleatoric_uncertainty,
+            "epistemic_uncertainty": epistemic_uncertainty,
+            "out_of_distribution": total_uncertainty,
+            "misclassification": total_uncertainty,
+            "ambiguous": aleatoric_uncertainty,
+        }

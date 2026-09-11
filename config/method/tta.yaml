@@ -1,5 +1,7 @@
 name: "tta"
-sample_size: 1000 # Number of MC samples for uncertainty estimation
+sample_size: 50
+ood_threshold: 1.45
+misclassify_threshold: 1.45
 
   
 augmentation:
@@ -9,12 +11,8 @@ augmentation:
       transforms:
         - _type: RandomAffine
           degrees: 0
-          scale: [0.95, 1.05]
+          scale: [0.9, 1.1]
         - _type: RandomRotation
-          degrees: [-10, 10]
-#        - _type: RandomHorizontalFlip
-#        - _type: RandomVerticalFlip
-    - _type: GaussianNoise
-      mean: 0
-      sigma: 0.1
-      clip: True
+          degrees: [-15, 15]
+    # - _type: RandomHorizontalFlip
+    # - _type: RandomVerticalFlip

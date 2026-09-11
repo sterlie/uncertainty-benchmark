@@ -8,6 +8,7 @@ from omegaconf import OmegaConf
 
 from src.methods.method import Method
 from src.methods.method_factory import register_method
+from src.methods.utils import multi_label_uncertainty, multi_class_uncertainty
 from src.models.model_factory import ModelFactory
 
 
@@ -21,6 +22,23 @@ def get_last_linear_layer(model):
 
 @register_method("het_xl")
 class HetXL(Method):
+    def _get_checkpoint_state(self):
+        return {
+            "model": self.model.state_dict(),
+            "low_rank_cov_layer": self._low_rank_cov_layer.state_dict(),
+            "diagonal_std_layer": self._diagonal_std_layer.state_dict(),
+        }
+
+    def _load_checkpoint_state(self, checkpoint):
+        if "model" in checkpoint:
+            self.model.load_state_dict(checkpoint["model"])
+            self._low_rank_cov_layer.load_state_dict(checkpoint["low_rank_cov_layer"])
+            self._diagonal_std_layer.load_state_dict(checkpoint["diagonal_std_layer"])
+            return
+
+        # Backward compatibility with older base-model-only checkpoints.
+        self.model.load_state_dict(checkpoint)
+
     def hook(self, module, input, output):
         self.features = output.detach()
 
@@ -35,8 +53,10 @@ class HetXL(Method):
         #                 config value is ignored to avoid shape mismatches.
         if self.use_het:
             self.output_features = self.num_classes
+            self.feature_dim = config.model.get('hidden_dim', config.method.get('output_features', 512))
         else:
-            self.output_features = config.model.get('hidden_dim', config.method.get('output_features', 512))
+            self.feature_dim = config.model.get('hidden_dim', config.method.get('output_features', 512))
+            self.output_features = self.feature_dim
         super(HetXL, self).__init__(config)
         self.ood_threshold = config.method.get('ood_threshold', 0.0)
         self.misclassify_threshold = config.method.get('misclassify_threshold', self.ood_threshold)
@@ -50,11 +70,11 @@ class HetXL(Method):
         """Initialize the model. Must be implemented by child classes."""
         self.model = ModelFactory.create(self.config)
         self._low_rank_cov_layer = nn.Linear(
-            in_features=self.config.model.hidden_dim,
+            in_features=self.feature_dim,
             out_features=self.output_features * self.matrix_rank,
         )
         self._diagonal_std_layer = nn.Linear(
-            in_features=self.config.model.hidden_dim,
+            in_features=self.feature_dim,
             out_features=self.output_features,
         )
         self._min_scale_monte_carlo = 1e-3
@@ -86,6 +106,13 @@ class HetXL(Method):
 
     def build_base_model(self, retrain=False, **kwargs):
         pass
+
+    def save_model(self, path: str) -> None:
+        torch.save(self._get_checkpoint_state(), path)
+
+    def load_model(self, path: str, train_loader=None, val_loader=None) -> None:
+        checkpoint = torch.load(path, weights_only=True, map_location=self.device)
+        self._load_checkpoint_state(checkpoint)
 
     def run_model(self, inputs: torch.Tensor, return_mean=True, return_variance=False):
         self.handle = self.named_modules[self.key].register_forward_hook(self.hook)
@@ -129,7 +156,10 @@ class HetXL(Method):
 
     def train_uncertainty_method(self, train_loader, valid_loader, loss_weight=None):
         optimizer = self.optimizer
-        criterion = nn.CrossEntropyLoss(loss_weight)
+        if self.is_multilabel:
+            criterion = nn.BCEWithLogitsLoss(pos_weight=loss_weight)
+        else:
+            criterion = nn.CrossEntropyLoss(loss_weight)
 
         # Training
 
@@ -149,6 +179,10 @@ class HetXL(Method):
 
             for batch_idx, (inputs, targets) in enumerate(train_loader):
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
+                if self.is_multilabel:
+                    targets = targets.float()
+                else:
+                    targets = targets.squeeze(1).long() if targets.ndim == 2 else targets.long()
 
                 optimizer.zero_grad()
                 outputs = self.run_model(inputs)
@@ -157,7 +191,10 @@ class HetXL(Method):
                 optimizer.step()
 
                 total_loss += loss.item()
-                total_correct += (outputs.argmax(1) == targets).sum().item()
+                if self.is_multilabel:
+                    total_correct += ((outputs > 0) == targets).sum().item()
+                else:
+                    total_correct += (outputs.argmax(1) == targets).sum().item()
 
             avg_loss = total_loss / len(train_loader)
 
@@ -170,26 +207,37 @@ class HetXL(Method):
                 for inputs, targets in valid_loader:
                     inputs = inputs.to(self.device)
                     targets = targets.to(self.device)
+                    if self.is_multilabel:
+                        targets = targets.float()
+                    else:
+                        targets = targets.squeeze(1).long() if targets.ndim == 2 else targets.long()
 
                     outputs = self.run_model(inputs)
                     # print(outputs, targets)
                     loss = criterion(outputs, targets)
 
                     val_loss += loss.item()
-                    val_correct += (outputs.argmax(1) == targets).sum().item()
+                    if self.is_multilabel:
+                        val_correct += ((outputs > 0) == targets).sum().item()
+                    else:
+                        val_correct += (outputs.argmax(1) == targets).sum().item()
 
             avg_val_loss = val_loss / len(valid_loader)
-            val_acc = val_correct / len(valid_loader.dataset)
+            if self.is_multilabel:
+                val_acc = val_correct / valid_loader.dataset[0][1].numel() / len(valid_loader.dataset)
+            else:
+                val_acc = val_correct / len(valid_loader.dataset)
 
             if val_acc > best_acc:
                 best_acc = val_acc
-                torch.save(self.model.state_dict(), _best_ckpt)
+                torch.save(self._get_checkpoint_state(), _best_ckpt)
 
             print(
-                f'Epoch {epoch + 1}/{epochs} - Train: Loss: {avg_loss:.4f}, Accuracy: {total_correct / len(train_loader.dataset):.4f}\nValidation: Loss {avg_val_loss:.4f}, Accuracy: {val_acc:.4f}')
+                f'Epoch {epoch + 1}/{epochs} - Train: Loss: {avg_loss:.4f}, Accuracy: {(total_correct / train_loader.dataset[0][1].numel() / len(train_loader.dataset)) if self.is_multilabel else (total_correct / len(train_loader.dataset)):.4f}\nValidation: Loss {avg_val_loss:.4f}, Accuracy: {val_acc:.4f}')
 
         if _best_ckpt.exists():
-            self.model.load_state_dict(torch.load(_best_ckpt, map_location=self.device, weights_only=True))
+            checkpoint = torch.load(_best_ckpt, map_location=self.device, weights_only=True)
+            self._load_checkpoint_state(checkpoint)
             _best_ckpt.unlink()
 
         return self.model
@@ -202,11 +250,45 @@ class HetXL(Method):
         with torch.no_grad():
             for inputs, targets in loader:
                 inputs = inputs.to(self.device)
+                targets = targets.to(self.device)
                 preds, variance = self.run_model(inputs, return_mean=False, return_variance=True)
-                preds = F.softmax(preds, dim=2)
+                preds = preds if self.is_multilabel else F.softmax(preds, dim=2)
                 predictions.append(preds.cpu())
                 labels.append(targets)
 
         predictions = torch.cat(predictions, dim=1)
         labels = torch.cat(labels, dim=0)
         return predictions, labels
+
+    def measure_uncertainty(self, loader: torch.utils.data.DataLoader):
+        predictions, ground_truth = self.inference(loader)
+        predictions = predictions.to(self.device)
+        ground_truth = ground_truth.to(self.device)
+        mean_prediction = predictions.mean(dim=0)
+
+        if self.is_multilabel:
+            reduction = not bool(self.config.method.get('uncertainty_per_class', False))
+            total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_label_uncertainty(
+                predictions,
+                mean_prediction,
+                reduction=reduction,
+            )
+            mean_prediction = torch.sigmoid(mean_prediction)
+        else:
+            total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_class_uncertainty(
+                predictions,
+                mean_prediction,
+                self.eps,
+            )
+
+        return {
+            "predictions": mean_prediction,
+            "predicted_labels": (mean_prediction > 0.5).long() if self.is_multilabel else mean_prediction.argmax(dim=-1),
+            "ground_truth": ground_truth,
+            "total_uncertainty": total_uncertainty,
+            "aleatoric_uncertainty": aleatoric_uncertainty,
+            "epistemic_uncertainty": epistemic_uncertainty,
+            "out_of_distribution": total_uncertainty,
+            "misclassification": total_uncertainty,
+            "ambiguous": aleatoric_uncertainty,
+        }

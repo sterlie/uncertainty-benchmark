@@ -46,6 +46,37 @@ def _build_plain_datasets(
     return train_plain, val_plain
 
 
+def _subset_prefix(dataset, subset_size):
+    subset_size = min(int(subset_size), len(dataset))
+    return Subset(dataset, list(range(subset_size)))
+
+
+def _subset_range(dataset, start: int, end: int):
+    start = max(0, int(start))
+    end = min(int(end), len(dataset))
+    if end <= start:
+        return Subset(dataset, [])
+    return Subset(dataset, list(range(start, end)))
+
+
+def _build_interleaved_blur_dataset(plain_dataset, distorted_datasets):
+    sources = [plain_dataset] + list(distorted_datasets)
+    total_size = min(len(dataset) for dataset in sources)
+    if total_size == 0:
+        return plain_dataset
+
+    portion = total_size // len(sources)
+    if portion == 0:
+        return plain_dataset
+
+    segments = [_subset_range(plain_dataset, 0, portion)]
+    for index, distorted_dataset in enumerate(distorted_datasets, start=1):
+        start = index * portion
+        end = start + portion
+        segments.append(_subset_range(distorted_dataset, start, end))
+    return ConcatDataset(segments)
+
+
 def _build_blur_loaders(
     root: str,
     batch_size: int,
@@ -57,27 +88,52 @@ def _build_blur_loaders(
     
     
     """Build clean training loaders and severity-specific blurred evaluation loaders."""
-    _, val_plain = _build_plain_datasets(
+    train_plain, val_plain = _build_plain_datasets(
         root=root,
         normalize=normalize,
         train_subset_size=train_subset_size,
         test_subset_size=test_subset_size,
     )
-    train_blurred = datasets.MNIST(
-        root=root,
-        train=True,
-        download=True,
-        transform=_mnist_transform(normalize, blur_kernel=5, blur_sigma=1, blur_prob=0.2),
-    )
-    train_blurred = _use_subset(train_blurred, train_subset_size)
+
+    blurred_train_datasets = []
+    blurred_val_datasets = []
+    for level in severity_levels:
+        level_name = str(level.name)
+        if level_name == "plain":
+            continue
+        blurred_train = datasets.MNIST(
+            root=root,
+            train=True,
+            download=True,
+            transform=_mnist_transform(
+                normalize,
+                blur_kernel=int(level.kernel),
+                blur_sigma=float(level.sigma),
+            ),
+        )
+        blurred_val = datasets.MNIST(
+            root=root,
+            train=False,
+            download=True,
+            transform=_mnist_transform(
+                normalize,
+                blur_kernel=int(level.kernel),
+                blur_sigma=float(level.sigma),
+            ),
+        )
+        blurred_train_datasets.append(_use_subset(blurred_train, train_subset_size))
+        blurred_val_datasets.append(_use_subset(blurred_val, test_subset_size))
+
+    mixed_train = _build_interleaved_blur_dataset(train_plain, blurred_train_datasets)
+    mixed_val = _build_interleaved_blur_dataset(val_plain, blurred_val_datasets)
 
     clean_train_loader = DataLoader(
-        train_blurred,
+        mixed_train,
         batch_size=batch_size,
         shuffle=True,
     )
     clean_val_loader = DataLoader(
-        val_plain,
+        mixed_val,
         batch_size=batch_size,
         shuffle=False,
     )
@@ -90,17 +146,20 @@ def _build_blur_loaders(
         level_name = str(level.name)
         level_names.append(level_name)
 
-        blur_kernel = int(level.kernel)
-        blur_sigma = float(level.sigma)
+        if level_name == "plain":
+            val_blur = val_plain
+        else:
+            blur_kernel = int(level.kernel)
+            blur_sigma = float(level.sigma)
 
-        val_blur = datasets.MNIST(
-            root=root,
-            train=False,
-            download=True,
-            transform=_mnist_transform(normalize, blur_kernel=blur_kernel, blur_sigma=blur_sigma),
-        )
+            val_blur = datasets.MNIST(
+                root=root,
+                train=False,
+                download=True,
+                transform=_mnist_transform(normalize, blur_kernel=blur_kernel, blur_sigma=blur_sigma),
+            )
 
-        val_blur = _use_subset(val_blur, test_subset_size)
+            val_blur = _use_subset(val_blur, test_subset_size)
 
         eval_loaders[level_name] = DataLoader(
             val_blur,
@@ -142,7 +201,7 @@ def _build_fracture_loaders(
         train_images,
         train_labels,
         perturbation=None,
-        transform=_mnist_transform(normalize, blur_kernel=5, blur_sigma=1, blur_prob=0.2),
+        transform=_mnist_transform(normalize),
     )
 
     clean_train_loader = DataLoader(
@@ -220,14 +279,14 @@ def _build_thinning_loaders(
         train_subset_size=train_subset_size,
         test_subset_size=test_subset_size,
     )
-    train_blurred = datasets.MNIST(
+    train_plain = datasets.MNIST(
         root=root, train=True, download=True,
-        transform=_mnist_transform(normalize, blur_kernel=5, blur_sigma=1, blur_prob=0.2),
+        transform=_mnist_transform(normalize),
     )
-    train_blurred = _use_subset(train_blurred, train_subset_size)
+    train_plain = _use_subset(train_plain, train_subset_size)
 
     clean_train_loader = DataLoader(
-        train_blurred,
+        train_plain,
         batch_size=batch_size,
         shuffle=True)
     clean_val_loader = DataLoader(

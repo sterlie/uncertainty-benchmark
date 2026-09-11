@@ -105,22 +105,15 @@ def _split_kfold(cfg: DictConfig, df: pd.DataFrame):
     splits = list(skf.split(df, stratify))
     trainval_idx, test_idx = splits[fold_index]
 
-    trainval_df = df.iloc[trainval_idx].reset_index(drop=True)
-    test_df = df.iloc[test_idx].reset_index(drop=True)
-
-    trainval_stratify = trainval_df["label"].apply(lambda v: int(np.array(v).argmax()))
-    train_df, val_df = train_test_split(
-        trainval_df,
-        test_size=float(cfg.dataset.get("val_ratio", 0.2)),
-        random_state=seed,
-        stratify=trainval_stratify,
-    )
+    train_df = df.iloc[trainval_idx].reset_index(drop=True)
+    val_df = df.iloc[test_idx].reset_index(drop=True)
+    test_df = val_df.copy().reset_index(drop=True)
 
     train_subset = cfg.dataset.get("train_subset", None)
     test_subset = cfg.dataset.get("test_subset", None)
     train_df = subset_df(train_df.reset_index(drop=True), train_subset)
     val_df = subset_df(val_df.reset_index(drop=True), test_subset)
-    test_df = subset_df(test_df, test_subset)
+    test_df = subset_df(test_df.reset_index(drop=True), test_subset)
     return train_df, val_df, test_df
 
 

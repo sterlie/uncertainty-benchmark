@@ -1,6 +1,9 @@
 import io, json, os, pickle
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RESULTS_DIR = PROJECT_ROOT / "results"
+
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
@@ -115,7 +118,7 @@ def load_results(date_overrides=None, experiments=None):
     results.clear()
     for exp in (experiments if experiments is not None else list(ORDERS)):
         date = date_overrides.get(exp)
-        results[exp] = root / date / exp
+        results[exp] = RESULTS_DIR / date / exp
 
     return results
 
@@ -401,7 +404,7 @@ def plot_ambiguity_auroc_compare(exp1, exp2, save=True):
 
 
 # ── Plot 5: All methods combined — 1×3 (one panel per uncertainty type) ───────
-def plot_combined_methods(experiment, normalize=False, sharey=True, save=True):
+def plot_combined_methods(experiment, normalize=False, sharey=False, save=True):
     """1×3 figure: each panel shows all methods as coloured lines for one uncertainty type.
 
     normalize: min-max scale each panel to [0,1] so all three panels share the same y-axis.

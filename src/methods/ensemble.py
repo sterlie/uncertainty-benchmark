@@ -29,9 +29,13 @@ class Ensemble(Method):
 
     def init_model(self):
         """Initialize the model. Must be implemented by child classes."""
-        self.model = [ModelFactory.create(self.config) for _ in range(self.sample_size)]
-        for model in self.model:
+        self.model = []
+        for index in range(self.sample_size):
+            torch.manual_seed(int(self.config.seed) + index)
+            model = ModelFactory.create(self.config)
             model.to(self.device)
+            self.model.append(model)
+        torch.manual_seed(int(self.config.seed))
         return
 
     def init_optimizer(self):
@@ -69,7 +73,30 @@ class Ensemble(Method):
         print(f"Saved model to {pretrained}")
 
     def build_base_model(self, retrain=False, **kwargs):
-        pass
+        if not retrain:
+            pretrained = kwargs.get('pretrained')
+            if pretrained is None:
+                raise ValueError("Pretrained checkpoint is required when retrain=False.")
+            if not self.load_pretrained_model(pretrained):
+                raise FileNotFoundError(f"Ensemble checkpoint not found: {pretrained}")
+            return
+
+        train_loader = kwargs.get('train_loader')
+        valid_loader = kwargs.get('val_loader')
+        if train_loader is None or valid_loader is None:
+            raise ValueError("train_loader and val_loader are required to train an ensemble.")
+
+        loss_weight = None
+        if self.config.weighted:
+            if 'weights' in self.config.dataset:
+                loss_weight = torch.tensor(self.config.dataset.weights).float().to(self.device)
+            else:
+                labels = torch.tensor(train_loader.dataset.labels)
+                class_counts = torch.bincount(labels, minlength=self.num_classes)
+                class_counts[class_counts == 0] = 1
+                loss_weight = (labels.numel() / (self.num_classes * class_counts.float())).to(self.device)
+
+        self.train_uncertainty_method(train_loader, valid_loader, loss_weight)
 
     def build_method(self, rebuild=False, **kwargs):
         if not rebuild:

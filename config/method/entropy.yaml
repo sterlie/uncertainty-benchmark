@@ -1,1 +1,3 @@
 name: "entropy"
+ood_threshold: 0.0
+misclassify_threshold: 0.0

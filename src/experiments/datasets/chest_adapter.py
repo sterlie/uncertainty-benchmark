@@ -318,9 +318,6 @@ def _split_by_patient(cfg: DictConfig, df: pd.DataFrame):
        (by_gender / by_age / by_disease_count).
     3. Splits patients 60/20/20 *within* each (subgroup × has_disease) bucket
        and concatenates — preserving subgroup balance across splits.
-    4. *train_subgroups*: optional list of subgroup values to keep in train/val
-       (test always contains all subgroups, replicating female_perc_in_training=0
-       / used_age_group behaviour from the old repo).
     """
     rs = int(cfg.seed) # set radom seed
 
@@ -341,10 +338,6 @@ def _split_by_patient(cfg: DictConfig, df: pd.DataFrame):
     if _pop_div is None:
         raise ValueError("'population_division' must be set in the experiment config (e.g. population_division: by_gender).")
     population_division = str(_pop_div)
-    train_subgroups = cfg.dataset.get("train_subgroups", None)
-    if train_subgroups is not None:
-        train_subgroups = set(train_subgroups)
-
     age_lower = int(cfg.dataset.get("age_lower", 50))
     age_upper = int(cfg.dataset.get("age_upper", 70))
     disease_count_threshold = int(cfg.dataset.get("disease_count_threshold", defaults["disease_count_threshold"]))
@@ -357,7 +350,7 @@ def _split_by_patient(cfg: DictConfig, df: pd.DataFrame):
     def _patient_subgroup(group: pd.DataFrame):
         if population_division == "by_gender":
             return group["sex"].iloc[0] if "sex" in group.columns else "unknown"
-        elif population_division == "by_age":
+        elif population_division.startswith("by_age"):
             age = int(group["age"].iloc[0]) if "age" in group.columns else 0
             return map_age(age, age_lower, age_upper)
         elif population_division == "by_disease_count":
@@ -385,10 +378,8 @@ def _split_by_patient(cfg: DictConfig, df: pd.DataFrame):
         b_train, b_val, b_test = _set_split(bucket[["pid"]], perc_train, perc_val, perc_test, rs)
         # Test always gets all subgroups
         test_pids.update(b_test["pid"])
-        # Train/val respect train_subgroups filter
-        if train_subgroups is None or _sg in train_subgroups:
-            train_pids.update(b_train["pid"])
-            val_pids.update(b_val["pid"])
+        train_pids.update(b_train["pid"])
+        val_pids.update(b_val["pid"])
 
     train_df = df[df["patient_id"].isin(train_pids)].reset_index(drop=True)
     val_df = df[df["patient_id"].isin(val_pids)].reset_index(drop=True)

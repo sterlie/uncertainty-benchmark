@@ -279,7 +279,7 @@ def main(cfg: DictConfig) -> None:
         result_dir = results_root / run_date / experiment_name / method_name
         plot_dir   = project_root / "plots"  / run_date / experiment_name / method_name
 
-        # ── Skip if results exist on any previous date ───────────────────
+        # Skip if results exist from today
         _marker_name = "amb_task_performance.json" if is_amb else "uncertainties_summary.json"
         _existing = _find_existing_result(method_name, _marker_name)
         if _existing is not None:
@@ -308,7 +308,7 @@ def main(cfg: DictConfig) -> None:
             method.save_model(str(model_path))
             print({"method": method_name, "model": "trained", "path": str(model_path)})
 
-        # ── Ambiguity task ────────────────────────────────────────────────
+        # Ambiguity task 
         if is_amb:
             amb_plot_dir = plot_dir / "amb"
             run_ambiguous_uncertainty_task(

@@ -1,6 +1,11 @@
 name: swag
-swa_start: 0
-
-epochs: 15
-sample_size: 10
-lr_increase_factor: 2
+epochs: 35
+sample_size: 3
+sub_population: 0.5
+scale: 0.1
+swag_batch_size: 64
+ood_threshold: 0.10
+misclassify_threshold: 0.35
+train_lr: 10.0
+swag:
+	swa_start: 6
