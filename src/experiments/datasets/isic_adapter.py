@@ -63,6 +63,7 @@ def _make_loader(df: pd.DataFrame, cfg: DictConfig, shuffle: bool, train: bool =
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
+        drop_last=train,
     )
 
 

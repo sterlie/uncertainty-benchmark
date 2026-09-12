@@ -126,6 +126,7 @@ class Method(ABC):
             train_loss = 0
             total_correct = 0
             total_labels = 0
+            seen_train_samples = 0
             for inputs, targets in train_loader:
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
 
@@ -137,6 +138,7 @@ class Method(ABC):
                 optimizer.step()
 
                 train_loss += loss.item() * targets.size(0)
+                seen_train_samples += targets.size(0)
                 if multilabel:
                     preds = (outputs > 0).float()
                     total_correct += (preds == targets).sum().item()
@@ -145,8 +147,7 @@ class Method(ABC):
                     total_correct += (outputs.argmax(1) == targets).sum().item()
                     total_labels += targets.size(0)
 
-
-            train_loss = train_loss / len(train_loader.dataset)
+            train_loss = train_loss / seen_train_samples
 
             # Validation
             self.model.eval()

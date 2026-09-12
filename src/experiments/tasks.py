@@ -37,6 +37,32 @@ def _concat_tensor_key(uncertainty_dict: dict, key: str) -> np.ndarray:
     return arr.mean(axis=-1) if arr.ndim == 2 else arr
 
 
+def _finite_scores(arr) -> np.ndarray:
+    arr = np.asarray(arr, dtype=np.float64)
+    return arr[np.isfinite(arr)]
+
+
+def _safe_mean(arr) -> float:
+    arr = _finite_scores(arr)
+    return float(np.mean(arr)) if arr.size else float("nan")
+
+
+def _safe_std(arr) -> float:
+    arr = _finite_scores(arr)
+    return float(np.std(arr)) if arr.size else float("nan")
+
+
+def _finite_binary_auroc(labels, scores) -> float:
+    labels = np.asarray(labels)
+    scores = np.asarray(scores, dtype=np.float64)
+    mask = np.isfinite(scores)
+    labels = labels[mask]
+    scores = scores[mask]
+    if scores.size == 0 or len(np.unique(labels)) <= 1:
+        return float("nan")
+    return float(roc_auc_score(labels, scores))
+
+
 # ── OOD subgroup task ─────────────────────────────────────────────────────
 
 def run_ood_subgroup_task(
@@ -124,17 +150,19 @@ def run_ood_subgroup_task(
     # ── 4. Uncertainty histograms ──────────────────────────────────────
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     for idx, ut in enumerate(_OOD_UNCERTAINTY_KEYS):
-        axes[idx].hist(id_arrays[ut], label=f"ID ({id_name})", bins=50, alpha=0.5)
+        id_scores = _finite_scores(id_arrays[ut])
+        axes[idx].hist(id_scores, label=f"ID ({id_name})", bins=50, alpha=0.5)
         for i, oname in enumerate(ood_names):
-            axes[idx].hist(ood_arrays_list[i][ut], label=f"OOD {i+1} ({oname})", bins=50, alpha=0.5)
+            ood_scores = _finite_scores(ood_arrays_list[i][ut])
+            axes[idx].hist(ood_scores, label=f"OOD {i+1} ({oname})", bins=50, alpha=0.5)
         axes[idx].set_xlabel("Score")
         axes[idx].set_ylabel("Count")
         axes[idx].legend()
         axes[idx].set_title(ut)
-        m_id = float(np.mean(id_arrays[ut]))
-        m_oods = [float(np.mean(ood_arrays_list[i][ut])) for i in range(len(ood_names))]
-        std_id = float(np.std(id_arrays[ut]))
-        std_oods = [float(np.std(ood_arrays_list[i][ut])) for i in range(len(ood_names))]
+        m_id = _safe_mean(id_arrays[ut])
+        m_oods = [_safe_mean(ood_arrays_list[i][ut]) for i in range(len(ood_names))]
+        std_id = _safe_std(id_arrays[ut])
+        std_oods = [_safe_std(ood_arrays_list[i][ut]) for i in range(len(ood_names))]
         performance[f"ood_dist_{ut}"] = [m_id] + m_oods
         performance[f"ood_dist_{ut}_std"] = [std_id] + std_oods
     plt.tight_layout()
@@ -144,22 +172,16 @@ def run_ood_subgroup_task(
     # ── 5. OOD detection AUROC ─────────────────────────────────────────
     # ID vs all OOD groups combined
     all_ood_arrays = {
-        ut: np.concatenate([ood_arrays_list[i][ut] for i in range(len(ood_names))])
+        ut: np.concatenate([_finite_scores(ood_arrays_list[i][ut]) for i in range(len(ood_names))])
         for ut in _OOD_UNCERTAINTY_KEYS
     }
     for ut in _OOD_UNCERTAINTY_KEYS:
-        id_s = id_arrays[ut]
+        id_s = _finite_scores(id_arrays[ut])
         ood_s = all_ood_arrays[ut]
-        if len(np.unique(np.concatenate([np.zeros(len(id_s)), np.ones(len(ood_s))]))) > 1:
-            try:
-                auroc = float(roc_auc_score(
-                    np.concatenate([np.zeros(len(id_s)), np.ones(len(ood_s))]),
-                    np.concatenate([id_s, ood_s]),
-                ))
-            except Exception:
-                auroc = float("nan")
-        else:
-            auroc = float("nan")
+        auroc = _finite_binary_auroc(
+            np.concatenate([np.zeros(len(id_s)), np.ones(len(ood_s))]),
+            np.concatenate([id_s, ood_s]),
+        )
         performance[f"ood_auroc_{ut}"] = auroc
         print(f"  OOD AUROC ({ut}): {auroc:.4f}")
 
@@ -206,10 +228,7 @@ def run_ood_subgroup_task(
             miscls = ((preds_id > 0.5) != gt_id.astype(bool))
         miscls = miscls.astype(int)
         for ut in _OOD_UNCERTAINTY_KEYS:
-            try:
-                auroc = float(roc_auc_score(miscls, id_arrays[ut])) if len(np.unique(miscls)) > 1 else float("nan")
-            except Exception:
-                auroc = float("nan")
+            auroc = _finite_binary_auroc(miscls, id_arrays[ut])
             performance[f"miscls_auroc_{ut}"] = auroc
             print(f"  Misclassification AUROC ({ut}): {auroc:.4f}")
 

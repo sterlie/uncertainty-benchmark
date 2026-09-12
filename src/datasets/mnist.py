@@ -131,6 +131,7 @@ def _build_blur_loaders(
         mixed_train,
         batch_size=batch_size,
         shuffle=True,
+        drop_last=True,
     )
     clean_val_loader = DataLoader(
         mixed_val,
@@ -208,6 +209,7 @@ def _build_fracture_loaders(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
+        drop_last=True,
     )
     clean_val_loader = DataLoader(
         val_plain,
@@ -288,7 +290,8 @@ def _build_thinning_loaders(
     clean_train_loader = DataLoader(
         train_plain,
         batch_size=batch_size,
-        shuffle=True)
+        shuffle=True,
+        drop_last=True)
     clean_val_loader = DataLoader(
         val_plain, 
         batch_size=batch_size, 
