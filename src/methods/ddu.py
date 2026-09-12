@@ -14,7 +14,7 @@ from src.methods.method_factory import register_method
 
 DOUBLE_INFO = torch.finfo(torch.double)
 JITTERS = [0, DOUBLE_INFO.tiny] + [10 ** exp for exp in range(-308, 0, 1)]
-# 2) Which layers can receive SpectralNorm?
+
 _SN_ELIGIBLE = (nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.Linear)
 REMOVE_SN = lambda m: nn.utils.parametrize.remove_parametrizations(m, "weight", leave_parametrized=True)
 

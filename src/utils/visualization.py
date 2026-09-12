@@ -52,11 +52,22 @@ def roc_simple(id_scores, ood_scores, plot_title: str = "ROC Curve"):
         id_scores = id_scores.detach().cpu().numpy()
     if isinstance(ood_scores, torch.Tensor):
         ood_scores = ood_scores.detach().cpu().numpy()
+    id_scores = np.asarray(id_scores, dtype=np.float64)
+    ood_scores = np.asarray(ood_scores, dtype=np.float64)
+    id_scores = id_scores[np.isfinite(id_scores)]
+    ood_scores = ood_scores[np.isfinite(ood_scores)]
+
+    fig, ax = plt.subplots()
+    if id_scores.size == 0 or ood_scores.size == 0:
+        ax.text(0.5, 0.5, "ROC unavailable: no finite scores", ha="center", va="center")
+        ax.set_axis_off()
+        ax.set_title(plot_title.replace("_", " "))
+        return fig
+
     true_labels = np.concatenate([np.zeros_like(id_scores), np.ones_like(ood_scores)])
     scores = np.concatenate([id_scores, ood_scores])
     fpr, tpr, _ = roc_curve(true_labels, scores)
     auroc = roc_auc_score(true_labels, scores)
-    fig, ax = plt.subplots()
     ax.plot(fpr, tpr, label=f"AUROC={auroc:.3f}")
     ax.plot([0, 1], [0, 1], "--", color="gray")
     ax.set_xlabel("False Positive Rate")
