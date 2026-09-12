@@ -255,28 +255,6 @@ class Swag(Method):
 
     def train_uncertainty_method(self, train_loader, val_loader):
         self.train_loader = train_loader
-        model_name = self.config.model.name
-        dataset_name = self.config.dataset.name
-        try:
-            from hydra.core.hydra_config import HydraConfig
-            project_root = Path(HydraConfig.get().runtime.cwd)
-        except Exception:
-            project_root = Path(os.getcwd())
-        path = (
-            project_root
-            / "models"
-            / dataset_name
-            / self.model_dir
-            / "checkpoints"
-            / f"swag_model_{model_name}.pt"
-        )
-        if path.exists():
-            self.swag_model.load_state_dict(
-                torch.load(path, map_location=self.device)
-            )
-            print(f"Loaded pretrained swag model from {path}")
-            return
-
         if self.is_multilabel:
             criterion = nn.BCEWithLogitsLoss()
         else:
@@ -319,9 +297,8 @@ class Swag(Method):
                 f"test_loss: {test_res['loss']:.4f}, test_acc: {test_res['accuracy']:.4f}"
             )
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(self.swag_model.state_dict(), path)
-        print(f"Saved swag model to {path}")
+    # SWAG persistence is handled by save_model()/load_model() so the runner
+    # and the method do not compete over a second hidden checkpoint path.
 
 
 
@@ -394,6 +371,7 @@ class Swag(Method):
         elif train_loader is not None:
             print(f"SWAG state not found at {swag_path}. Refitting from training data...")
             self.train_uncertainty_method(train_loader, val_loader)
+            torch.save(self.swag_model.state_dict(), swag_path)
         else:
             raise FileNotFoundError(
                 f"SWAG state not found at {swag_path} and no train_loader provided to refit."

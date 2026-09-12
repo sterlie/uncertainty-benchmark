@@ -48,6 +48,8 @@ def multi_class_uncertainty(predictions, mean_prediction, eps=1e-8):
     # Epistemic uncertainty (mutual information)
     epistemic_uncertainty = total_uncertainty - aleatoric_uncertainty
     mean_pred_batch = mean_prediction.unsqueeze(0).repeat(predictions.shape[0], 1, 1)
+    mean_pred_batch = mean_pred_batch.clamp_min(eps)
+    predictions = predictions.clamp_min(eps)
     epistemic_uncertainty_kl = 0.5 * (
         F.kl_div(mean_pred_batch.log(), predictions, reduction="none").sum(dim=2).mean(dim=0) +
         F.kl_div(predictions.log(), mean_pred_batch, reduction="none").sum(dim=2).mean(dim=0))

@@ -60,20 +60,15 @@ def centered_cov_torch(x):
 
 def get_embeddings(
     method, net, loader: torch.utils.data.DataLoader, handle: Callable, num_dim: int, dtype, device, storage_device,
+    multi_label=False,
 ):
     num_samples = len(loader.dataset)
     embeddings = torch.empty((num_samples, num_dim), dtype=dtype, device=storage_device)
 
-    # Peek at first batch to determine label shape (single-label 1D vs multi-label 2D)
-    first_data, first_label = next(iter(loader))
-    first_label = first_label.to(device)
-    if first_label.ndim == 2 and first_label.shape[1] > 1:
-        # multi-label: keep (N, num_classes)
-        labels = torch.empty((num_samples, first_label.shape[1]), dtype=torch.int, device=storage_device)
-        multi_label = True
+    if multi_label:
+        labels = torch.empty((num_samples, method.num_classes), dtype=torch.float, device=storage_device)
     else:
         labels = torch.empty(num_samples, dtype=torch.int, device=storage_device)
-        multi_label = False
 
     with torch.no_grad():
         start = 0
@@ -82,7 +77,7 @@ def get_embeddings(
             label = label.to(device)
 
             if multi_label:
-                label = label.long()
+                label = label.float()
             else:
                 label = label.squeeze(1).long() if label.ndim == 2 else label.long()
 
@@ -150,33 +145,63 @@ def gmm_get_logits(gmm, embeddings):
     return log_probs_B_Y
 
 
-def gmm_fit(embeddings, labels, num_classes):
+def gmm_fit(embeddings, labels, num_classes, multi_label=False):
     with torch.no_grad():
-        if labels.ndim == 2:
-            # multi-label: for class c select samples where label[:, c] == 1
-            def _mask(c):
-                return labels[:, c].bool()
+        if multi_label:
+            classwise_mean_features_pos = []
+            classwise_cov_features_pos = []
+            classwise_mean_features_neg = []
+            classwise_cov_features_neg = []
+            labels_sum = torch.sum(labels, dim=-1)
+            threshold = 0.5
+
+            for c in range(num_classes):
+                pos_mask = labels[:, c] > threshold
+                neg_mask = labels_sum <= threshold
+
+                if pos_mask.sum() > 0:
+                    pos_mean = torch.mean(embeddings[pos_mask], dim=0)
+                    pos_cov = centered_cov_torch(embeddings[pos_mask] - pos_mean)
+                else:
+                    pos_mean = torch.zeros(embeddings.shape[1], dtype=embeddings.dtype, device=embeddings.device)
+                    pos_cov = torch.eye(embeddings.shape[1], dtype=embeddings.dtype, device=embeddings.device)
+
+                if neg_mask.sum() > 0:
+                    neg_mean = torch.mean(embeddings[neg_mask], dim=0)
+                    neg_cov = centered_cov_torch(embeddings[neg_mask] - neg_mean)
+                else:
+                    neg_mean = torch.zeros(embeddings.shape[1], dtype=embeddings.dtype, device=embeddings.device)
+                    neg_cov = torch.eye(embeddings.shape[1], dtype=embeddings.dtype, device=embeddings.device)
+
+                classwise_mean_features_pos.append(pos_mean)
+                classwise_cov_features_pos.append(pos_cov)
+                classwise_mean_features_neg.append(neg_mean)
+                classwise_cov_features_neg.append(neg_cov)
+
+            classwise_mean_features_pos = torch.stack(classwise_mean_features_pos, dim=0)
+            classwise_cov_features_pos = torch.stack(classwise_cov_features_pos, dim=0)
+            classwise_mean_features_neg = torch.stack(classwise_mean_features_neg, dim=0)
+            classwise_cov_features_neg = torch.stack(classwise_cov_features_neg, dim=0)
+
+            classwise_mean_features = torch.cat([classwise_mean_features_pos, classwise_mean_features_neg[:1]], dim=0)
+            classwise_cov_features = torch.cat([classwise_cov_features_pos, classwise_cov_features_neg[:1]], dim=0)
         else:
-            def _mask(c):
-                return labels == c
+            num_dim = embeddings.shape[1]
+            classwise_mean_features = []
+            classwise_cov_features = []
+            for c in range(num_classes):
+                class_embs = embeddings[labels == c]
+                if class_embs.shape[0] == 0:
+                    mean = torch.zeros(num_dim, dtype=embeddings.dtype, device=embeddings.device)
+                    cov = torch.eye(num_dim, dtype=embeddings.dtype, device=embeddings.device)
+                else:
+                    mean = torch.mean(class_embs, dim=0)
+                    cov = centered_cov_torch(class_embs - mean)
+                classwise_mean_features.append(mean)
+                classwise_cov_features.append(cov)
 
-        num_dim = embeddings.shape[1]
-        classwise_mean_features = []
-        classwise_cov_features = []
-        for c in range(num_classes):
-            class_embs = embeddings[_mask(c)]
-            if class_embs.shape[0] == 0:
-                # No samples for this class — use zero mean and identity covariance
-                mean = torch.zeros(num_dim, dtype=embeddings.dtype, device=embeddings.device)
-                cov = torch.eye(num_dim, dtype=embeddings.dtype, device=embeddings.device)
-            else:
-                mean = torch.mean(class_embs, dim=0)
-                cov = centered_cov_torch(class_embs - mean)
-            classwise_mean_features.append(mean)
-            classwise_cov_features.append(cov)
-
-        classwise_mean_features = torch.stack(classwise_mean_features)
-        classwise_cov_features = torch.stack(classwise_cov_features)
+            classwise_mean_features = torch.stack(classwise_mean_features)
+            classwise_cov_features = torch.stack(classwise_cov_features)
         print(classwise_mean_features.shape, classwise_cov_features.shape)
 
     with torch.no_grad():
@@ -324,13 +349,15 @@ class DDU(Method):
             num_dim=self.config.model.get('hidden_dim', 512),
             dtype=torch.double,
             device=self.device,
-            storage_device=self.device
+            storage_device=self.device,
+            multi_label=self.is_multilabel,
         )
         self.handle.remove()
         self.gaussian_models, self.jitter_eps = gmm_fit(
             embeddings=self.embeddings,
             labels=self.labels,
-            num_classes=self.num_classes
+            num_classes=self.num_classes,
+            multi_label=self.is_multilabel,
         )
 
     def run_model(self, inputs: torch.Tensor):
