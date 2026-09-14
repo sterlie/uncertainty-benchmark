@@ -112,7 +112,22 @@ class HetXL(Method):
 
     def load_model(self, path: str, train_loader=None, val_loader=None) -> None:
         checkpoint = torch.load(path, weights_only=True, map_location=self.device)
+        has_full_state = isinstance(checkpoint, dict) and all(
+            k in checkpoint for k in ("model", "low_rank_cov_layer", "diagonal_std_layer")
+        )
+
+        if has_full_state:
+            self._load_checkpoint_state(checkpoint)
+            return
+
+        # Legacy compatibility: base-model-only checkpoints need HetXL heads to be refit.
         self._load_checkpoint_state(checkpoint)
+        if train_loader is not None and val_loader is not None:
+            print("Loaded legacy HetXL checkpoint without uncertainty heads. Refitting HetXL layers...")
+            self.train_uncertainty_method(train_loader, val_loader)
+            self.save_model(path)
+        else:
+            print("Warning: loaded legacy HetXL base-model-only checkpoint without refitting uncertainty layers.")
 
     def run_model(self, inputs: torch.Tensor, return_mean=True, return_variance=False):
         self.handle = self.named_modules[self.key].register_forward_hook(self.hook)
@@ -242,6 +257,10 @@ class HetXL(Method):
 
         return self.model
 
+    def train_model(self, train_loader, val_loader, **kwargs):
+        """Train HetXL end-to-end in the unified runner flow."""
+        self.train_uncertainty_method(train_loader, val_loader)
+
     def inference(self, loader: torch.utils.data.DataLoader):
         self.model.eval()
 
@@ -267,7 +286,7 @@ class HetXL(Method):
         mean_prediction = predictions.mean(dim=0)
 
         if self.is_multilabel:
-            reduction = not bool(self.config.method.get('uncertainty_per_class', False))
+            reduction = not bool(self.config.method.get('uncertainty_per_class', self.config.dataset.get('uncertainty_per_class', False)))
             total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_label_uncertainty(
                 predictions,
                 mean_prediction,

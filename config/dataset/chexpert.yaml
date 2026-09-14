@@ -30,6 +30,7 @@ all_classes: [
 ]
 
 multilabel: true
+uncertainty_per_class: true
 image_id_col: Path
 patient_id_col: null
 sex_col: Sex

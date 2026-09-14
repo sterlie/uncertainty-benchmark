@@ -100,7 +100,9 @@ class Method(ABC):
 
     @property
     def is_multilabel(self) -> bool:
-        return bool(self.config.dataset.get('multilabel', False))
+        return bool(self.config.dataset.get('multilabel', False)) and (
+            self.config.dataset.get('chosen_disease', None) is None
+        )
 
     def train_base_model(self, train_loader: torch.utils.data.DataLoader, val_loader: torch.utils.data.DataLoader, loss_weight=None):
         """Train the model using standard supervised learning."""

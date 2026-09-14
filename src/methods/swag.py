@@ -31,7 +31,9 @@ class Swag(Method):
         self.swag_batch_size = config.method.get('swag_batch_size', 64)
         self.ood_threshold = config.method.get('ood_threshold', 0.0)
         self.misclassify_threshold = config.method.get('misclassify_threshold', self.ood_threshold)
-        self.uncertainty_per_class = config.method.get('uncertainty_per_class', False)
+        self.uncertainty_per_class = bool(
+            config.method.get('uncertainty_per_class', config.dataset.get('uncertainty_per_class', False))
+        )
         self.train_loader = None
         self.model_dir = "swag"
         self.eps = 1e-12
@@ -338,6 +340,39 @@ class Swag(Method):
                     k += inputs.size(0)
 
         return predictions, labels
+
+    def measure_uncertainty(self, loader):
+        predictions, ground_truth = self.inference(loader)
+        predictions = predictions.to(self.device)
+        ground_truth = ground_truth.to(self.device)
+        mean_prediction = predictions.mean(dim=0)
+
+        if self.is_multilabel:
+            total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_label_uncertainty(
+                predictions,
+                mean_prediction,
+                reduction=not self.uncertainty_per_class,
+                sigmoid=False,
+                eps=self.eps,
+            )
+        else:
+            total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_class_uncertainty(
+                predictions,
+                mean_prediction,
+                self.eps,
+            )
+
+        return {
+            "predictions": mean_prediction,
+            "predicted_labels": (mean_prediction > 0.5).long() if self.is_multilabel else mean_prediction.argmax(dim=-1),
+            "ground_truth": ground_truth,
+            "total_uncertainty": total_uncertainty,
+            "aleatoric_uncertainty": aleatoric_uncertainty,
+            "epistemic_uncertainty": epistemic_uncertainty,
+            "out_of_distribution": total_uncertainty,
+            "misclassification": total_uncertainty,
+            "ambiguous": aleatoric_uncertainty,
+        }
 
     # ------------------------------------------------------------------ #
     # New lifecycle hooks called by the experiment runner                  #

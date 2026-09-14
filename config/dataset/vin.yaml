@@ -14,6 +14,7 @@ images_dir: ${dataset.data_root}
 metadata_csv: ${dataset.data_root}/train.csv
 
 multilabel: true
+uncertainty_per_class: true
 
 # VinDr-CXR raw CSV column names (annotation-level; preprocessed internally)
 image_id_col: image_id
