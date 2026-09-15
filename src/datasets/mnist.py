@@ -46,11 +46,6 @@ def _build_plain_datasets(
     return train_plain, val_plain
 
 
-def _subset_prefix(dataset, subset_size):
-    subset_size = min(int(subset_size), len(dataset))
-    return Subset(dataset, list(range(subset_size)))
-
-
 def _subset_range(dataset, start: int, end: int):
     start = max(0, int(start))
     end = min(int(end), len(dataset))
@@ -84,57 +79,59 @@ def _build_blur_loaders(
     severity_levels,
     train_subset_size,
     test_subset_size,
+    train_blur_prob: float = 0.2,
+    train_blur_kernel: int | None = None,
+    train_blur_sigma: float | None = None,
 ) -> Tuple[DataLoader, DataLoader, Dict[str, DataLoader], List[str]]:
-    
-    
-    """Build clean training loaders and severity-specific blurred evaluation loaders."""
-    train_plain, val_plain = _build_plain_datasets(
+    """Build p-blur training loader and severity-specific blurred evaluation loaders."""
+    non_plain_levels = [level for level in severity_levels if str(level.name) != "plain"]
+    if train_blur_kernel is None and non_plain_levels:
+        train_blur_kernel = int(non_plain_levels[0].kernel)
+    if train_blur_sigma is None and non_plain_levels:
+        train_blur_sigma = float(non_plain_levels[0].sigma)
+    if train_blur_kernel is None:
+        train_blur_kernel = 5
+    if train_blur_sigma is None:
+        train_blur_sigma = 1.0
+
+    train_transform = _mnist_transform(normalize)
+    if train_blur_prob and float(train_blur_prob) > 0:
+        train_transform = _mnist_transform(
+            normalize,
+            blur_kernel=int(train_blur_kernel),
+            blur_sigma=float(train_blur_sigma),
+            blur_prob=float(train_blur_prob),
+        )
+
+    train_plain = datasets.MNIST(
         root=root,
-        normalize=normalize,
-        train_subset_size=train_subset_size,
-        test_subset_size=test_subset_size,
+        train=True,
+        download=True,
+        transform=train_transform,
+    )
+    val_plain = datasets.MNIST(
+        root=root,
+        train=False,
+        download=True,
+        transform=_mnist_transform(normalize),
     )
 
-    blurred_train_datasets = []
-    blurred_val_datasets = []
+    train_plain = _use_subset(train_plain, train_subset_size)
+    val_plain = _use_subset(val_plain, test_subset_size)
+
     for level in severity_levels:
         level_name = str(level.name)
         if level_name == "plain":
             continue
-        blurred_train = datasets.MNIST(
-            root=root,
-            train=True,
-            download=True,
-            transform=_mnist_transform(
-                normalize,
-                blur_kernel=int(level.kernel),
-                blur_sigma=float(level.sigma),
-            ),
-        )
-        blurred_val = datasets.MNIST(
-            root=root,
-            train=False,
-            download=True,
-            transform=_mnist_transform(
-                normalize,
-                blur_kernel=int(level.kernel),
-                blur_sigma=float(level.sigma),
-            ),
-        )
-        blurred_train_datasets.append(_use_subset(blurred_train, train_subset_size))
-        blurred_val_datasets.append(_use_subset(blurred_val, test_subset_size))
-
-    mixed_train = _build_interleaved_blur_dataset(train_plain, blurred_train_datasets)
-    mixed_val = _build_interleaved_blur_dataset(val_plain, blurred_val_datasets)
 
     clean_train_loader = DataLoader(
-        mixed_train,
+        train_plain,
         batch_size=batch_size,
         shuffle=True,
         drop_last=True,
     )
     clean_val_loader = DataLoader(
-        mixed_val,
+        val_plain,
         batch_size=batch_size,
         shuffle=False,
     )
@@ -361,6 +358,9 @@ def build_mnist_loaders(
             severity_levels=severity_levels,
             train_subset_size=train_subset,
             test_subset_size=test_subset,
+            train_blur_prob=float(cfg.experiment.get("train_blur_prob", 0.2)),
+            train_blur_kernel=cfg.experiment.get("train_blur_kernel", None),
+            train_blur_sigma=cfg.experiment.get("train_blur_sigma", None),
         )
     if distortion_pattern == "fracture":
         severity_levels = cfg.experiment.severity_levels
@@ -390,6 +390,9 @@ def build_mnist_loaders(
             severity_levels=cfg.experiment.severity_levels,
             train_subset_size=train_subset,
             test_subset_size=test_subset,
+            train_blur_prob=float(cfg.experiment.get("train_blur_prob", 0.2)),
+            train_blur_kernel=cfg.experiment.get("train_blur_kernel", None),
+            train_blur_sigma=cfg.experiment.get("train_blur_sigma", None),
         )
 
     if distortion_pattern == "mnist_uncertainty_decomp_fracture":
