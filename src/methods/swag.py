@@ -272,7 +272,7 @@ class Swag(Method):
 
             if (epoch + 1) > swa_start:
                 self.swag_model.collect_model(self.model)
-                self.swag_model.sample(scale=0.0, cov=True)
+                self.swag_model.sample(scale=self.scale, cov=True)
                 self._sample_to_device()
                 self.bn_update(train_loader, self.swag_model)
 
@@ -315,18 +315,20 @@ class Swag(Method):
             labels = torch.zeros(n_data)
 
         sub_size = max(1, int(len(self.train_loader.dataset) * self.sub_population))
-        indices = torch.randperm(len(self.train_loader.dataset))[:sub_size]
-        sub_loader = DataLoader(
-            Subset(self.train_loader.dataset, indices),
-            batch_size=self.swag_batch_size, shuffle=True,
-        )
 
         for i in range(n_samples):
-            self.swag_model.sample(scale=self.scale, cov=True)
+            indices = torch.randperm(len(self.train_loader.dataset))[:sub_size]
+            sub_loader = DataLoader(
+                Subset(self.train_loader.dataset, indices),
+                batch_size=self.swag_batch_size,
+                shuffle=True,
+            )
+
+            sample_seed = int(torch.seed())
+            self.swag_model.sample(scale=self.scale, cov=True, seed=sample_seed)
             self._sample_to_device()
             self.bn_update(sub_loader, self.swag_model)
             self.swag_model.eval()
-            torch.manual_seed(i)
             k = 0
             with torch.no_grad():
                 for batch in tqdm(loader):
