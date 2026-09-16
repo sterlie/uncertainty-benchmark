@@ -169,7 +169,10 @@ def trend(uncertainty_scores):
     for i, k_ in enumerate(['total_uncertainty', 'aleatoric_uncertainty', 'epistemic_uncertainty']):
         rows = []
         for name in uncertainty_scores.keys():
-            scores = uncertainty_scores[name][k_].detach().cpu().numpy() if isinstance(uncertainty_scores[name][k_], torch.Tensor) else uncertainty_scores[name][k_]
+            scores = uncertainty_scores[name][k_].detach().cpu().numpy() if isinstance(uncertainty_scores[name][k_], torch.Tensor) else np.asarray(uncertainty_scores[name][k_])
+            # collapse any extra (e.g. per-class) dims to a single per-sample score
+            if scores.ndim > 1:
+                scores = scores.mean(axis=tuple(range(1, scores.ndim)))
             rows.append({
                 'Uncertainty Score': scores,
                 'distortion_cat': name,
