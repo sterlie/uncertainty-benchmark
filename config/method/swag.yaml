@@ -6,6 +6,8 @@ scale: 0.5
 swag_batch_size: 64
 ood_threshold: 0.10
 misclassify_threshold: 0.35
-train_lr: 10.0
+
+train_lr: 0.01
+lr_increase_factor: 2
 swag:
-  swa_start: 6
+  swa_start: 0
