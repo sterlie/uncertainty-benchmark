@@ -7,7 +7,7 @@ from torch import nn
 
 from src.methods import register_method
 from src.methods.method import Method
-from src.methods.utils import multi_label_uncertainty, multi_class_uncertainty
+from src.methods.utils import bernoulli_entropy, multi_label_uncertainty, multi_class_uncertainty
 
 def build_transform(cfg):
     """Recursively build transforms (supports Compose, RandomChoice, etc.)."""
@@ -31,6 +31,7 @@ class TTA(Method):
         self.sample_size = config.method.get('sample_size', 100)
         self.ood_threshold = config.method.get('ood_threshold', 0.0)
         self.misclassify_threshold = config.method.get('misclassify_threshold', self.ood_threshold)
+
         self.default_augmentation = build_transform(config.method.augmentation)
         print(self.default_augmentation)
 
@@ -82,43 +83,35 @@ class TTA(Method):
         predictions = predictions.to(self.device)
         labels = labels.to(self.device)
 
-        mean_prediction = predictions.mean(dim=0)
+        p_mean = torch.mean(predictions, dim=0)
+        predictions_, _ = self.inference(loader, enable_augmentation=False, enable_dropout=True)
+        mean_pred = predictions_.mean(dim=0)
 
         if self.is_multilabel:
-            total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_label_uncertainty(
-                predictions,
-                mean_prediction,
-                reduction=not bool(self.config.method.get('uncertainty_per_class', self.config.dataset.get('uncertainty_per_class', False))),
-                sigmoid=False,
-                eps=self.eps,
-            )
-            mutual_information = epistemic_uncertainty
+            # sigmoid outputs are independent per-class probabilities, not a joint
+            # distribution, so use per-class Bernoulli entropy instead of -sum(p*log p)
+            aleatoric_uncertainty = bernoulli_entropy(p_mean, self.eps).mean(dim=1)
+            epistemic_uncertainty = bernoulli_entropy(mean_pred, self.eps).mean(dim=1)
         else:
-            total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_class_uncertainty(
-                predictions,
-                mean_prediction,
-                self.eps,
-            )
-            mutual_information = (
-                predictions * (torch.log(predictions + self.eps) - torch.log(mean_prediction + self.eps))
-            ).sum(dim=2).mean(dim=0)
+            aleatoric_uncertainty = -torch.sum(p_mean * torch.log(p_mean + self.eps), dim=1)
+            epistemic_uncertainty = -torch.sum(mean_pred * torch.log(mean_pred + self.eps), dim=1)
+
+        total_uncertainty = epistemic_uncertainty + aleatoric_uncertainty
 
         var_epistemic = predictions.var(dim=0).sum(dim=-1)  # [B, C] --> [B]
         var_aleatoric = (predictions * (1 - predictions)).mean(dim=0).sum(dim=-1)
         var_total = var_epistemic + var_aleatoric
 
         return {
-            "predictions": mean_prediction,
-            "predicted_labels": (mean_prediction > 0.5).long() if self.is_multilabel else mean_prediction.argmax(dim=-1),
+            "predictions": p_mean,
+            "predicted_labels": predictions.argmax(dim=-1).mode(dim=0).values,
             "ground_truth": labels,
             "total_uncertainty": total_uncertainty,
             "aleatoric_uncertainty": aleatoric_uncertainty,
             "epistemic_uncertainty": epistemic_uncertainty,
-            "mutual_information": mutual_information,
+            "mutual_information": torch.zeros(total_uncertainty.size(0)),
             "variance_epistemic_uncertainty": var_epistemic,
             "variance_aleatoric_uncertainty": var_aleatoric,
             "variance_total_uncertainty": var_total,
-            "out_of_distribution": total_uncertainty,
-            "misclassification": total_uncertainty,
-            "ambiguous": aleatoric_uncertainty,
+            "out_of_distribution": torch.zeros(total_uncertainty.size(0)),
         }

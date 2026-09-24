@@ -277,14 +277,11 @@ class DDU(Method):
     def __init__(self, config):
         super(DDU, self).__init__(config)
         self.classification = self.config.method.get('classification', 'basic')
-        self.uncertainty = self.config.method.get('uncertainty', 'logsumexp')
         self.uncertainty_per_class = bool(
             self.config.method.get('uncertainty_per_class', self.config.dataset.get('uncertainty_per_class', False))
         )
         assert self.classification in ['basic', 'gmm']
-        assert self.uncertainty in ['logsumexp', 'entropy']
         self.model_dir = "ddu"
-        self.uncertainty = self.uncertainty
 
         self.named_modules = dict(self.model.named_modules())
         self.key = list(self.named_modules.keys())[-2]
@@ -399,36 +396,30 @@ class DDU(Method):
         self.handle.remove()
 
         reduction = not self.uncertainty_per_class
-        if self.uncertainty == 'entropy':
-            uncertainty_function = lambda x: entropy(x, multi_label=self.is_multilabel, reduction=reduction)
-        else:
-            uncertainty_function = lambda x: logsumexp(x, multi_label=self.is_multilabel, reduction=reduction)
 
-        if self.is_multilabel and logits.ndim == 2 and self.uncertainty == 'logsumexp':
-            logits = logits.unsqueeze(-1)
+        # aleatroic is the entropy of predictions
+        aleatoric_uncertainty = entropy(logits, multi_label=self.is_multilabel, reduction=reduction)
 
-        aleatoric_uncertainty = uncertainty_function(logits)
-        epistemic_uncertainty = uncertainty_function(logits_feat)
-
-        if self.uncertainty_per_class and logits_feat.shape[-1] > self.num_classes:
-            aleatoric_uncertainty = aleatoric_uncertainty[:, :self.num_classes]
+        # epistemic uncertainty is the log marginal densities 
+        # logsumexp of GDA class densities approximates -log p(z): low density (OOD) -> high uncertainty
+        epistemic_uncertainty = -logsumexp(logits_feat, multi_label=self.is_multilabel, reduction=reduction)
+        if self.uncertainty_per_class and epistemic_uncertainty.shape[-1] > self.num_classes:
+            # multi-label GMM has one extra shared "negative" component beyond num_classes
             epistemic_uncertainty = epistemic_uncertainty[:, :self.num_classes]
-
         total_uncertainty = aleatoric_uncertainty + epistemic_uncertainty
-        if self.uncertainty == "logsumexp":
-            total_uncertainty = -total_uncertainty
-            aleatoric_uncertainty = -aleatoric_uncertainty
-            epistemic_uncertainty = -epistemic_uncertainty
-        elif self.uncertainty == 'entropy' and self.is_multilabel:
-            epistemic_uncertainty = -logsumexp(logits_feat, multi_label=True, reduction=reduction)
-            if self.uncertainty_per_class and epistemic_uncertainty.ndim == 2:
-                epistemic_uncertainty = epistemic_uncertainty[:, :self.num_classes]
-            total_uncertainty = aleatoric_uncertainty + epistemic_uncertainty
+
+        # gda.log_density(test_features) <= ood_threshold flags a sample as OOD
+        is_ood = self.ood_threshold <= epistemic_uncertainty
 
         ood_score = total_uncertainty
         misclassify_score = total_uncertainty
+        predictions = torch.sigmoid(logits) if self.is_multilabel else F.softmax(logits, dim=-1)
+
+        # aleatoric/ambiguity is only meaningful in-distribution; mask it out for OOD samples
+        # instead of computing entropy(predictions) only "if not is_ood" (ood_score/misclassify_score
+        # above stay based on the unmasked total_uncertainty so OOD-detection AUROC is unaffected).
+        aleatoric_uncertainty = torch.where(is_ood, torch.full_like(aleatoric_uncertainty, float("nan")), aleatoric_uncertainty)
         ambiguous_score = aleatoric_uncertainty
-        predictions = torch.sigmoid(logits.squeeze(-1)) if self.is_multilabel else F.softmax(logits, dim=-1)
 
         zero_uncertainty = torch.zeros_like(total_uncertainty)
 
@@ -441,6 +432,7 @@ class DDU(Method):
             "aleatoric_uncertainty": aleatoric_uncertainty,
             "epistemic_uncertainty": epistemic_uncertainty,
             "out_of_distribution": ood_score,
+            "is_ood": is_ood,
             "misclassification": misclassify_score,
             "ambiguous": ambiguous_score,
             "mutual_information": zero_uncertainty,

@@ -229,6 +229,88 @@ def _resolve_methods_to_run(cfg: DictConfig) -> List[str]:
     return unique_methods
 
 
+def _run_per_level_experiments(
+    cfg: DictConfig,
+    dataset_name: str,
+    experiment_name: str,
+    project_root: Path,
+    run_date: str,
+    results_root: Path,
+    methods_to_run: List[str],
+    train_loaders: Dict[str, DataLoader],
+    val_loaders: Dict[str, DataLoader],
+) -> Dict[str, Dict[str, Dict[str, float]]]:
+    """Train one model per severity level (matching old Uncertainty_Benchmark
+    load_aleatoric_data3): each level gets its own full train/val set and is
+    evaluated only against its own matching val set."""
+    comparison_summary: Dict[str, Dict[str, Dict[str, float]]] = {}
+    uncertainty_keys = ("total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty")
+
+    for level_name, train_loader in train_loaders.items():
+        val_loader = val_loaders[level_name]
+        comparison_summary[level_name] = {}
+
+        for method_name in methods_to_run:
+            print({"level": level_name, "method": method_name, "status": "start"})
+            set_random_seed(int(cfg.seed))
+
+            method_cfg = MethodFactory.load_method_config(cfg, method_name)
+            method = MethodFactory.create(method_cfg)
+
+            model_dir  = project_root / "models" / dataset_name / method_name / level_name
+            result_dir = results_root / run_date / experiment_name / method_name / level_name
+            plot_dir   = project_root / "plots"  / run_date / experiment_name / method_name / level_name
+
+            summary_path = result_dir / "uncertainties_summary.json"
+            if summary_path.exists():
+                with open(summary_path) as f:
+                    comparison_summary[level_name][method_name] = json.load(f)
+                print({"level": level_name, "method": method_name, "status": "skipped (results exist)"})
+                continue
+
+            model_dir.mkdir(parents=True, exist_ok=True)
+            result_dir.mkdir(parents=True, exist_ok=True)
+            plot_dir.mkdir(parents=True, exist_ok=True)
+
+            model_path = model_dir / f"base_model_{method_cfg.model.name}.pt"
+            if model_path.exists():
+                method.load_model(str(model_path), train_loader=train_loader, val_loader=val_loader)
+                print({"level": level_name, "method": method_name, "model": "loaded"})
+            else:
+                method.train_model(
+                    train_loader,
+                    val_loader,
+                    epochs=int(method_cfg.experiment.epochs),
+                    lr=float(method_cfg.experiment.lr),
+                )
+                method.save_model(str(model_path))
+                print({"level": level_name, "method": method_name, "model": "trained"})
+
+            uncertainty = method.measure_uncertainty(val_loader)
+            with open(result_dir / "val_uncertainties.pkl", "wb") as f:
+                pickle.dump(uncertainty, f)
+
+            summary = {
+                k: float(torch.mean(uncertainty[k]).item())
+                if isinstance(uncertainty[k], torch.Tensor)
+                else float(np.mean(uncertainty[k]))
+                for k in uncertainty_keys
+            }
+            with open(summary_path, "w", encoding="utf-8") as f:
+                json.dump(summary, f, indent=2)
+
+            comparison_summary[level_name][method_name] = summary
+            print({"level": level_name, "method": method_name, "status": "done"})
+
+    comparison_path = results_root / run_date / experiment_name / "level_method_comparison_summary.json"
+    comparison_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(comparison_path, "w", encoding="utf-8") as f:
+        json.dump(comparison_summary, f, indent=2)
+    print({"level_comparison_summary": str(comparison_path)})
+
+    return comparison_summary
+
+
 @hydra.main(config_path="../../config", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     print("Configuration loaded:")
@@ -267,6 +349,22 @@ def main(cfg: DictConfig) -> None:
     methods_to_run = _resolve_methods_to_run(cfg)
     comparison_summary: Dict[str, Dict[str, Dict[str, float]]] = {}
     auroc_summary: Dict[str, Dict[str, float]] = {}
+
+    if isinstance(base_train_loader, dict):
+        # Adapter returned one train/val loader per severity level (e.g. MNIST blur) —
+        # train a separate model per level instead of the single-model trend flow below.
+        _run_per_level_experiments(
+            cfg=cfg,
+            dataset_name=dataset_name,
+            experiment_name=experiment_name,
+            project_root=project_root,
+            run_date=run_date,
+            results_root=results_root,
+            methods_to_run=methods_to_run,
+            train_loaders=base_train_loader,
+            val_loaders=base_val_loader,
+        )
+        return
 
     for method_name in methods_to_run:
         print({"method": method_name, "status": "start"})
