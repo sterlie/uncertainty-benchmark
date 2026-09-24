@@ -185,11 +185,7 @@ class Swag(Method):
         flag = [False]
         model.apply(lambda module: self._check_bn(module, flag))
         return flag[0]
-    #
-    # def reset_bn(self, module):
-    #     if issubclass(module.__class__, torch.nn.modules.batchnorm._BatchNorm):
-    #         module.running_mean = torch.zeros_like(module.running_mean)
-    #         module.running_var = torch.ones_like(module.running_var)
+
     def reset_bn(self, module):
         if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
             module.running_mean.zero_()
@@ -268,22 +264,19 @@ class Swag(Method):
             criterion = nn.CrossEntropyLoss()
 
         swa_start = int(self.config.method.swag.swa_start)
-        train_lr = self.config.method.get("train_lr", None)
+        train_lr = self.config.method.get("train_lr", 0.01)
+        increase_factor = self.config.method.lr_increase_factor
 
         for epoch in range(self.config.method.epochs):
-            if train_lr is not None and (epoch + 1) > swa_start:
+            if (epoch + 1) > swa_start:
                 for group in self.optimizer.param_groups:
-                    group['lr'] = train_lr
+                    group['lr'] = train_lr * increase_factor
+                    
 
             train_res = self.train_epoch(train_loader, criterion)
             test_res = self.eval(val_loader, self.model, criterion)
 
             if (epoch + 1) > swa_start:
-                # collect + sample before touching swag_model: SWAG pops the
-                # base model's weight/bias parameters at construction time and
-                # only re-populates them via collect_model()/sample(), so any
-                # forward pass through swag_model before that raises
-                # AttributeError ("no attribute 'weight'").
                 self.swag_model.collect_model(self.model)
                 self.swag_model.sample(scale=self.scale, cov=True)
                 self._sample_to_device()
