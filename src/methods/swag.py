@@ -54,13 +54,11 @@ class Swag(Method):
         arguments.pop("name", None)
         arguments.pop("epochs", None)
         scheduler_arguments = arguments.pop("scheduler", None)
-        train_lr = self.config.method.get(
-            "train_lr",
-            arguments["lr"] * self.config.method.get("lr_increase_factor", 1.0),
-        )
+        # start at the base optimizer lr; train_uncertainty_method bumps this
+        # to config.method.train_lr only once training passes swa_start.
         self.optimizer = torch.optim.SGD(
             self.model.parameters(),
-            lr=train_lr,
+            lr=arguments["lr"],
             weight_decay=arguments.get("weight_decay", 0.0),
             momentum=arguments.get("momentum", 0.9),
         )
@@ -269,29 +267,25 @@ class Swag(Method):
         else:
             criterion = nn.CrossEntropyLoss()
 
-        sgd_ens_preds = None
-        n_ensembled = 0.0
         swa_start = int(self.config.method.swag.swa_start)
+        train_lr = self.config.method.get("train_lr", None)
 
         for epoch in range(self.config.method.epochs):
+            if train_lr is not None and (epoch + 1) > swa_start:
+                for group in self.optimizer.param_groups:
+                    group['lr'] = train_lr
+
             train_res = self.train_epoch(train_loader, criterion)
             test_res = self.eval(val_loader, self.model, criterion)
 
             if (epoch + 1) > swa_start:
-                sgd_res = self.run_predictions(val_loader)
-                sgd_preds = sgd_res["predictions"]
-                if sgd_ens_preds is None:
-                    sgd_ens_preds = sgd_preds.copy()
-                else:
-                    sgd_ens_preds = (
-                        sgd_ens_preds * n_ensembled / (n_ensembled + 1)
-                        + sgd_preds / (n_ensembled + 1)
-                    )
-                n_ensembled += 1
-                
+                # collect + sample before touching swag_model: SWAG pops the
+                # base model's weight/bias parameters at construction time and
+                # only re-populates them via collect_model()/sample(), so any
+                # forward pass through swag_model before that raises
+                # AttributeError ("no attribute 'weight'").
                 self.swag_model.collect_model(self.model)
                 self.swag_model.sample(scale=self.scale, cov=True)
-                #self._sample_to_device()
                 self.bn_update(train_loader, self.swag_model)
 
                 swag_res = self.eval(val_loader, self.swag_model, criterion)
