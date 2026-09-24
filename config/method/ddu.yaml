@@ -4,5 +4,5 @@ uncertainty: entropy
 # ood_threshold: 0.0
 # : 100.0
 # ood_threshold: 3570.0
-ood_threshold: 3800.0
+ood_threshold: 0.001
 misclassify_threshold: 0.0
