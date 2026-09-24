@@ -27,7 +27,7 @@ class Swag(Method):
         )
         self.swag_model.to(self.device)
         self.sub_population = config.method.get('sub_population', 1.0)
-        self.scale = config.method.get('scale', 0.1)
+        self.scale = config.method.get('scale', 0.5)
         self.swag_batch_size = config.method.get('swag_batch_size', 64)
         self.ood_threshold = config.method.get('ood_threshold', 0.0)
         self.misclassify_threshold = config.method.get('misclassify_threshold', self.ood_threshold)
@@ -85,6 +85,7 @@ class Swag(Method):
     def train_epoch(self, loader, criterion):
         self.model.train()
         metrics = self._make_metrics()
+
         total_loss = 0.0
         total_metrics = [0.0] * len(metrics)
         total_samples = 0
@@ -143,34 +144,40 @@ class Swag(Method):
 
         avg_loss = total_loss / len(loader)
         metrics_str = ", ".join(f"{m.name}: {total_metrics[i] / total_samples:.4f}" for i, m in enumerate(metrics))
+        
         print(f'Evaluation... Loss: {avg_loss:.4f}, {metrics_str}')
-        return {"loss": avg_loss, "accuracy": total_metrics[1] / total_samples}
 
-    def run_model(self, inputs, use_swag=False, **kwargs):
+        return {
+            "loss": avg_loss, 
+            "accuracy": total_metrics[1] / total_samples
+        }
+    def run_model(self, inputs: torch.Tensor, use_swag=False, **kwargs):
         if use_swag:
             return self.swag_model(inputs)
         return self.model(inputs)
 
-    def run_predictions(self, test_loader):
+    def run_predictions(self, test_loader: torch.utils.data.DataLoader):
         all_predictions = []
         all_targets = []
-        self.swag_model.eval()
-        with torch.no_grad():
-            for inputs, targets, *_ in test_loader:
-                preds = self.predict(inputs)
-                all_predictions.append(preds)
-                all_targets.append(targets.to(self.device))
-        return {
+        for inputs, targets in test_loader:
+            predictions = self.predict(inputs)
+            all_predictions.append(predictions)
+            all_targets.append(targets)
+        results = {
             "predictions": torch.cat(all_predictions, dim=0),
             "targets": torch.cat(all_targets, dim=0),
         }
+        return results
 
-    def predict(self, inputs):
+    def predict(self, inputs: torch.Tensor):
         inputs = inputs.to(self.device)
         self.swag_model.eval()
         self.swag_model.to(self.device)
+
         with torch.no_grad():
-            return self.run_model(inputs, use_swag=True)
+            predictions = self.run_model(inputs, use_swag=True)
+            predictions = predictions.to(self.device)
+        return predictions
 
     def _check_bn(self, module, flag):
         if issubclass(module.__class__, torch.nn.modules.batchnorm._BatchNorm):
@@ -271,21 +278,21 @@ class Swag(Method):
             test_res = self.eval(val_loader, self.model, criterion)
 
             if (epoch + 1) > swa_start:
-                self.swag_model.collect_model(self.model)
-                self.swag_model.sample(scale=self.scale, cov=True)
-                self._sample_to_device()
-                self.bn_update(train_loader, self.swag_model)
-
                 sgd_res = self.run_predictions(val_loader)
                 sgd_preds = sgd_res["predictions"]
                 if sgd_ens_preds is None:
-                    sgd_ens_preds = sgd_preds.clone()
+                    sgd_ens_preds = sgd_preds.copy()
                 else:
                     sgd_ens_preds = (
                         sgd_ens_preds * n_ensembled / (n_ensembled + 1)
                         + sgd_preds / (n_ensembled + 1)
                     )
                 n_ensembled += 1
+                
+                self.swag_model.collect_model(self.model)
+                self.swag_model.sample(scale=self.scale, cov=True)
+                #self._sample_to_device()
+                self.bn_update(train_loader, self.swag_model)
 
                 swag_res = self.eval(val_loader, self.swag_model, criterion)
                 print(
@@ -309,10 +316,16 @@ class Swag(Method):
         n_data = len(loader.dataset)
 
         predictions = torch.zeros((n_samples, n_data, self.num_classes))
+
         if self.is_multilabel:
             labels = torch.zeros(n_data, self.num_classes)
         else:
             labels = torch.zeros(n_data)
+
+        k = 0
+        for batch in loader:
+            labels[k:k + batch[0].size(0)] = batch[1]
+            k += batch[0].size(0)
 
         sub_size = max(1, int(len(self.train_loader.dataset) * self.sub_population))
 
@@ -333,12 +346,9 @@ class Swag(Method):
             with torch.no_grad():
                 for batch in tqdm(loader):
                     inputs = batch[0].to(self.device)
-                    targets = batch[1]
                     output = self.swag_model(inputs)
                     probs = torch.sigmoid(output) if self.is_multilabel else F.softmax(output, dim=1)
                     predictions[i, k:k + inputs.size(0)] = probs.cpu()
-                    if i == 0:
-                        labels[k:k + inputs.size(0)] = targets
                     k += inputs.size(0)
 
         return predictions, labels
