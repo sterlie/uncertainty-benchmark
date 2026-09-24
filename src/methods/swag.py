@@ -286,6 +286,7 @@ class Swag(Method):
                 # AttributeError ("no attribute 'weight'").
                 self.swag_model.collect_model(self.model)
                 self.swag_model.sample(scale=self.scale, cov=True)
+                self._sample_to_device()
                 self.bn_update(train_loader, self.swag_model)
 
                 swag_res = self.eval(val_loader, self.swag_model, criterion)
