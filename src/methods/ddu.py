@@ -404,7 +404,7 @@ class DDU(Method):
             predictions = F.softmax(logits, dim=-1)
 
         # aleatroic is the entropy of predictions
-        aleatoric_uncertainty = entropy(logits, multi_label=self.is_multilabel, reduction=reduction)
+        aleatoric_uncertainty = entropy(predictions, multi_label=self.is_multilabel, reduction=reduction)
 
         # epistemic uncertainty is the log marginal densities 
         # logsumexp of GDA class densities approximates -log p(z): low density (OOD) -> high uncertainty
