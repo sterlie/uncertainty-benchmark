@@ -11,7 +11,11 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import torch
+from omegaconf import OmegaConf
 from sklearn.metrics import roc_auc_score
+
+from src.datasets.isic import build_isic_subgroup_slices
+from src.experiments.datasets.isic_adapter import _read_merged_table
 
 
 class _CPUUnpickler(pickle.Unpickler):
@@ -47,7 +51,8 @@ ORDERS = {
     'nih_gender':       ['Male', 'Female'],
 
     # CHEXPERT
-    'chexpert_age':     ['age_0', 'age_10', 'age_20', 'age_30', 'age_40', 'age_50', 'age_60', 'age_70', 'age_80', 'age_90'],
+    #'chexpert_age':     ['age_0', 'age_10', 'age_20', 'age_30', 'age_40', 'age_50', 'age_60', 'age_70', 'age_80', 'age_90'],
+    'chexpert_age':     ['age_group_0', 'age_group_1', 'age_group_2'] ,
     'chexpert_disease': [f'disease_{i}' for i in range(7)],
     'chexpert_gender':  ['Male', 'Female'],
 
@@ -126,18 +131,29 @@ def load_results(date_overrides=None, experiments=None):
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 def _to_np(v):
-    return np.asarray(v.detach().cpu().numpy() if hasattr(v, 'numpy') else v).ravel()
+    arr = np.asarray(v.detach().cpu().numpy() if hasattr(v, 'numpy') else v)
+    if arr.ndim >= 2:
+        arr = arr.mean(axis=-1)
+    return arr.ravel()
 
 
-def _ood_mean_std(rd, method, level, u_type):
-    p = rd / method / f'ood_uncertainty_{level}.pkl'
+def _ood_mean_var(rd, method, level, u_type):
+    method_path = _method_dir(rd, method)
+    if method_path is None:
+        return np.nan, 0, 0
+    p = method_path / f'ood_uncertainty_{level}.pkl'
     if not p.exists():
         return np.nan, 0, 0
     d = load_pkl(p)
-    if u_type not in d:
+    if method == 'ddu' and u_type == 'epistemic_uncertainty':
+        if 'total_uncertainty' not in d or 'aleatoric_uncertainty' not in d:
+            return np.nan, 0, 0
+        arr = _to_np(d['total_uncertainty']) - _to_np(d['aleatoric_uncertainty'])
+    elif u_type in d:
+        arr = _to_np(d[u_type])
+    else:
         return np.nan, 0, 0
-    arr = _to_np(d[u_type])
-    return np.nanmean(arr), np.nanstd(arr), len(arr)
+    return np.nanmean(arr), np.nanvar(arr), len(arr)
 
 
 def _save(fig, name):
@@ -145,6 +161,20 @@ def _save(fig, name):
     out.parent.mkdir(exist_ok=True)
     fig.savefig(out, bbox_inches='tight')
     print(f'Saved → {out}')
+
+
+def _isic_distribution_counts(experiment):
+    subgroup = experiment.removeprefix('isic_')
+    dataset_cfg = OmegaConf.load(PROJECT_ROOT / 'config' / 'dataset' / 'isic.yaml')
+    cfg = OmegaConf.create({
+        'seed': 11111,
+        'data': {'root': str(PROJECT_ROOT / 'data')},
+        'dataset': dataset_cfg,
+    })
+    OmegaConf.resolve(cfg)
+    merged = _read_merged_table(cfg)
+    subgroup_frames = build_isic_subgroup_slices(merged, subgroup)
+    return [len(subgroup_frames.get(level, [])) for level in ORDERS[experiment]]
 
 
 # ── Plot 1: Per-method OOD uncertainty grid (2 × 4) ──────────────────────────
@@ -165,16 +195,21 @@ def plot_method_grid(experiment, u_types=None, save=True):
     for i, method in enumerate(available[:8]):
         ax = axes[i // 4, i % 4]
         for u_type in u_types:
+            if method == 'entropy' and u_type != 'total_uncertainty':
+                continue
+            if method not in methods.get(u_type, methods['total_uncertainty']):
+                continue
             clr = U_COLORS.get(u_type, 'steelblue')
             ys, errs = [], []
             for lv in order:
-                m, s, _ = _ood_mean_std(rd, method, lv, u_type)
-                ys.append(m); errs.append(s)
+                m, v, _ = _ood_mean_var(rd, method, lv, u_type)
+                ys.append(m)
+                errs.append(v)
             ax.plot(order, ys, color=clr, linewidth=1.5, label=u_type.replace('_', ' '))
-            ax.fill_between(order,
-                            [y - e for y, e in zip(ys, errs)],
-                            [y + e for y, e in zip(ys, errs)],
-                            alpha=0.15, color=clr)
+            #ax.fill_between(order,
+            #                [y - e for y, e in zip(ys, errs)],
+            #                [y + e for y, e in zip(ys, errs)],
+            #                alpha=0.15, color=clr)
         ax.set_title(legend_map.get(method, method), fontsize=9)
         ax.set_xlabel(xlabel, fontsize=8)
         ax.set_ylabel('Uncertainty Score', fontsize=8)
@@ -202,14 +237,17 @@ def plot_distribution(experiment, save=True):
     available = [m for m in methods['total_uncertainty'] if (rd / m).is_dir()]
     ref       = available[0] if available else None
 
-    counts = []
-    for lv in order:
-        p = rd / ref / f'ood_uncertainty_{lv}.pkl' if ref else None
-        if p and p.exists():
-            d = load_pkl(p)
-            counts.append(len(_to_np(next(iter(d.values())))))
-        else:
-            counts.append(0)
+    if experiment.startswith('isic_'):
+        counts = _isic_distribution_counts(experiment)
+    else:
+        counts = []
+        for lv in order:
+            p = rd / ref / f'ood_uncertainty_{lv}.pkl' if ref else None
+            if p and p.exists():
+                d = load_pkl(p)
+                counts.append(len(_to_np(next(iter(d.values())))))
+            else:
+                counts.append(0)
 
     fig, ax = plt.subplots(figsize=(max(6, len(order) * 0.8), 4))
     ax.bar(range(len(order)), counts, color='steelblue')
@@ -226,35 +264,45 @@ def plot_distribution(experiment, save=True):
 
 # ── Plot 3: OOD-detection AUROC line plot ─────────────────────────────────────
 def plot_ood_auroc(experiment, u_type='total_uncertainty', save=True):
-    """Per-method OOD-detection AUROC line plot across OOD levels."""
+    """Per-method OOD-detection AUROC line plot across OOD levels.
+
+    AUROC is computed per OOD level by concatenating ID uncertainty
+    (from valid_uncertainties.pkl) and that level's OOD uncertainty.
+    """
     if experiment not in results:
         print(f'{experiment} not available'); return
     rd        = results[experiment]
     order     = ORDERS[experiment]
     xlabel    = XLABELS[experiment]
     m_list    = methods.get(u_type, methods['total_uncertainty'])
-    available = [m for m in m_list if (rd / m).is_dir()]
+    available = [m for m in m_list if _method_dir(rd, m) is not None]
 
     fig, ax = plt.subplots(figsize=(max(8, len(order) * 0.7), 5))
-    fig.suptitle(f'{experiment}  —  OOD AUROC  ({u_type.replace("_", " ")})', fontsize=13)
+    fig.suptitle(f'{experiment}', fontsize=13)
 
     for method in available:
-        id_path = rd / method / 'valid_uncertainties.pkl'
+        mdir = _method_dir(rd, method)
+        if mdir is None:
+            continue
+
+        id_path = mdir / 'valid_uncertainties.pkl'
         if not id_path.exists():
             continue
         id_d = load_pkl(id_path)
-        if u_type not in id_d:
+        id_scores = _extract_uncertainty_array(id_d, method, u_type)
+        if id_scores is None or len(id_scores) == 0:
             continue
-        id_scores = _to_np(id_d[u_type])
+
         aurocs = []
         for lv in order:
-            p = rd / method / f'ood_uncertainty_{lv}.pkl'
+            p = mdir / f'ood_uncertainty_{lv}.pkl'
             if not p.exists():
                 aurocs.append(np.nan); continue
             ood_d = load_pkl(p)
-            if u_type not in ood_d:
+            ood_scores = _extract_uncertainty_array(ood_d, method, u_type)
+            if ood_scores is None or len(ood_scores) == 0:
                 aurocs.append(np.nan); continue
-            ood_scores = _to_np(ood_d[u_type])
+
             labels = np.concatenate([np.zeros(len(id_scores)), np.ones(len(ood_scores))])
             scores = np.concatenate([id_scores, ood_scores])
             try:
@@ -262,7 +310,7 @@ def plot_ood_auroc(experiment, u_type='total_uncertainty', save=True):
             except Exception:
                 aurocs.append(np.nan)
         label = legend_map.get(method, method)
-        ax.plot(order, aurocs, label=label, color=palette_dict.get(label), linewidth=1.5, marker='o', markersize=4)
+        ax.plot(order, aurocs, label=label, color=palette_dict.get(label), linewidth=1.5)
 
     ax.set_xlabel(xlabel)
     ax.set_ylabel('AUROC')
@@ -271,6 +319,64 @@ def plot_ood_auroc(experiment, u_type='total_uncertainty', save=True):
     plt.tight_layout()
     if save:
         _save(fig, f'ood_auroc_{experiment}_{u_type}.pdf')
+    plt.show()
+
+
+def plot_misclassification_from_id(experiment, u_type='total_uncertainty', save=True):
+    """Bar chart of misclassification-detection AUROC per method from ID uncertainties.
+
+    Uses valid_uncertainties.pkl for each method and computes AUROC between:
+    - true_labels: predicted_labels != ground_truth
+    - scores: selected uncertainty type
+    """
+    if experiment not in results:
+        print(f'{experiment} not available'); return
+    rd = results[experiment]
+
+    rows = []
+    for method in methods.get(u_type, methods['total_uncertainty']):
+        mdir = _method_dir(rd, method)
+        if mdir is None:
+            continue
+
+        p = mdir / 'valid_uncertainties.pkl'
+        if not p.exists():
+            continue
+
+        data = load_pkl(p)
+        uncertainty = _extract_uncertainty_array(data, method, u_type)
+        gt = data.get('ground_truth')
+        pred = data.get('predicted_labels')
+        if uncertainty is None or gt is None or pred is None:
+            continue
+
+        gt = _to_np(gt).astype(int)
+        pred = _to_np(pred).astype(int)
+        if len(uncertainty) != len(gt) or len(pred) != len(gt):
+            continue
+
+        true_labels = (pred != gt).astype(int)
+        if len(np.unique(true_labels)) < 2:
+            auroc = np.nan
+        else:
+            try:
+                auroc = roc_auc_score(true_labels, uncertainty)
+            except Exception:
+                auroc = np.nan
+
+        rows.append({'Method': legend_map.get(method, method), 'AUROC': auroc})
+
+    if not rows:
+        print(f'No valid ID uncertainty results found for {experiment}'); return
+
+    res = pd.DataFrame(rows)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.barplot(x='Method', y='AUROC', hue='Method', data=res, palette=palette_dict, legend=False, ax=ax)
+    ax.set_ylabel('AUROC (Misclassification Detection)')
+    ax.set_ylim([0.4, 1.0])
+    plt.tight_layout()
+    if save:
+        _save(fig, f'misclassification_{experiment}.pdf')
     plt.show()
 
 # ── Plot 4: Misclassification detection AUROC bar chart ──────────────────────
@@ -342,7 +448,7 @@ def plot_ambiguity_auroc(experiment, save=True):
     )
 
 
-def _amb_task_auroc_compare_barplot(exp1, exp2, json_key, title, filename_prefix, save=True):
+def _amb_task_auroc_compare_barplot(exp1, exp2, col1, col2, json_key, title, filename_prefix, save=True):
     """Shared helper: grouped bar chart comparing an amb_task AUROC field across two experiments."""
     rows = []
     for exp in (exp1, exp2):
@@ -365,8 +471,12 @@ def _amb_task_auroc_compare_barplot(exp1, exp2, json_key, title, filename_prefix
         print(f'No amb_task_performance.json results found for {exp1} / {exp2}'); return
 
     res = pd.DataFrame(rows)
+    hue_palette = {
+        exp1: col1,
+        exp2: col2,
+    }
     fig, ax = plt.subplots(figsize=(12, 5))
-    sns.barplot(x='Method', y='AUROC', hue='Experiment', data=res, ax=ax)
+    sns.barplot(x='Method', y='AUROC', hue='Experiment', data=res, palette=hue_palette, ax=ax)
     ymin = min(0.4, max(0.0, res['AUROC'].min() - 0.05))
     ax.set_ylim(ymin, 1.0)
     ax.set_ylabel('AUROC')
@@ -384,6 +494,7 @@ def plot_misclassification_auroc_compare(exp1, exp2, save=True):
     per method, comparing two experiments side by side ('vin_amb' vs 'chexpert_amb')."""
     _amb_task_auroc_compare_barplot(
         exp1, exp2,
+        '#3B75AF', '#BCBD45',
         json_key='miscls_auroc_total_uncertainty',
         title=f'{exp1} vs {exp2}  —  Misclassification detection (total uncertainty)',
         filename_prefix='misclassification_auroc_compare',
@@ -395,7 +506,7 @@ def plot_ambiguity_auroc_compare(exp1, exp2, save=True):
     """Grouped bar chart — ambiguity-detection AUROC (aleatoric uncertainty), per method,
     comparing two experiments side by side ('vin_amb' vs 'chexpert_amb')."""
     _amb_task_auroc_compare_barplot(
-        exp1, exp2,
+        exp1, exp2, '#3B75AF', '#C53A32',
         json_key='amb_auroc_aleatoric_uncertainty',
         title=f'{exp1} vs {exp2}  —  Ambiguity detection (aleatoric uncertainty)',
         filename_prefix='ambiguity_auroc_compare',
@@ -403,12 +514,156 @@ def plot_ambiguity_auroc_compare(exp1, exp2, save=True):
     )
 
 
-# ── Plot 5: All methods combined — 1×3 (one panel per uncertainty type) ───────
-def plot_combined_methods(experiment, normalize=False, sharey=False, save=True):
-    """1×3 figure: each panel shows all methods as coloured lines for one uncertainty type.
+def _extract_uncertainty_array(d, method, u_type):
+    """Return flattened uncertainty array for a given method/type with DDU fallback."""
+    if method == 'ddu' and u_type == 'epistemic_uncertainty':
+        if 'epistemic_uncertainty' in d:
+            return _to_np(d['epistemic_uncertainty'])
+        if 'total_uncertainty' in d and 'aleatoric_uncertainty' in d:
+            return _to_np(d['total_uncertainty']) - _to_np(d['aleatoric_uncertainty'])
+        return None
+    if u_type not in d:
+        return None
+    return _to_np(d[u_type])
 
-    normalize: min-max scale each panel to [0,1] so all three panels share the same y-axis.
+
+def _ood_auroc_from_pickles(rd, method, experiment, u_type='epistemic_uncertainty'):
+    """Compute OOD AUROC from saved ID/OOD uncertainty pickles for one method/experiment."""
+    mdir = _method_dir(rd, method)
+    if mdir is None:
+        return np.nan
+
+    id_path = mdir / 'valid_uncertainties.pkl'
+    if not id_path.exists():
+        return np.nan
+    id_data = load_pkl(id_path)
+    id_scores = _extract_uncertainty_array(id_data, method, u_type)
+    if id_scores is None or len(id_scores) == 0:
+        return np.nan
+
+    configured_levels = ORDERS.get(experiment, [])
+    levels = []
+    for lv in configured_levels:
+        if (mdir / f'ood_uncertainty_{lv}.pkl').exists():
+            levels.append(lv)
+
+    # Fallback for legacy naming (e.g. chexpert age_group_* runs).
+    if not levels:
+        detected = []
+        for p in mdir.glob('ood_uncertainty_*.pkl'):
+            suffix = p.stem.removeprefix('ood_uncertainty_')
+            if suffix:
+                detected.append(suffix)
+
+        def _level_sort_key(name):
+            parts = name.split('_')
+            tail = parts[-1] if parts else name
+            return (name.rstrip('0123456789'), int(tail) if tail.isdigit() else tail)
+
+        levels = sorted(set(detected), key=_level_sort_key)
+
+    ood_chunks = []
+    for lv in levels:
+        p = mdir / f'ood_uncertainty_{lv}.pkl'
+        if not p.exists():
+            continue
+        ood_data = load_pkl(p)
+        ood_scores = _extract_uncertainty_array(ood_data, method, u_type)
+        if ood_scores is None or len(ood_scores) == 0:
+            continue
+        ood_chunks.append(ood_scores)
+
+    if not ood_chunks:
+        return np.nan
+
+    ood_all = np.concatenate(ood_chunks)
+    labels = np.concatenate([np.zeros(len(id_scores)), np.ones(len(ood_all))])
+    scores = np.concatenate([id_scores, ood_all])
+    try:
+        return float(roc_auc_score(labels, scores))
+    except Exception:
+        return np.nan
+
+
+def plot_chest_epistemic_auroc_compare(date_overrides=None, save=True):
+    """Grouped bar chart for chest X-ray epistemic OOD AUROC across age and disease shifts.
+
+    Expects date_overrides with keys:
+    - chexpert_age
+    - chexpert_disease
+    - nih_age
+    - nih_disease
     """
+    expected = ['chexpert_age', 'chexpert_disease', 'nih_age', 'nih_disease']
+    if date_overrides is None:
+        date_overrides = {
+            'chexpert_age': '2026-08-28',
+            'chexpert_disease': '2026-09-02',
+            'nih_age': '2026-08-29',
+            'nih_disease': '2026-09-11',
+        }
+
+    missing = [k for k in expected if k not in date_overrides]
+    if missing:
+        print(f'Missing dates for: {missing}'); return
+
+    exp_specs = [
+        ('chexpert_age', 'CheXpert - Age Shift', '#E07A1F'),
+        ('chexpert_disease', 'CheXpert - Disease Shift', '#4DAA57'),
+        ('nih_age', 'NIH - Age Shift', '#C56A1A'),
+        ('nih_disease', 'NIH - Disease Shift', '#2F8F3B'),
+    ]
+
+    method_order = methods['total_uncertainty']
+    rows = []
+
+    for exp, label, _ in exp_specs:
+        rd = RESULTS_DIR / date_overrides[exp] / exp
+        for method in method_order:
+            auroc = _ood_auroc_from_pickles(rd, method, exp, u_type='epistemic_uncertainty')
+            rows.append({
+                'MethodKey': method,
+                'Method': legend_map.get(method, method),
+                'Shift': label,
+                'AUROC_pct': np.nan if np.isnan(auroc) else auroc * 100.0,
+            })
+
+    res = pd.DataFrame(rows)
+    res = res.dropna(subset=['AUROC_pct'])
+    if res.empty:
+        print('No chest epistemic AUROC values could be computed.'); return
+
+    fig, ax = plt.subplots(figsize=(14, 3))
+    hue_palette = {label: color for _, label, color in exp_specs}
+    sns.barplot(
+        x='Method',
+        y='AUROC_pct',
+        hue='Shift',
+        data=res,
+        order=[legend_map.get(m, m) for m in method_order],
+        hue_order=[label for _, label, _ in exp_specs],
+        palette=hue_palette,
+        ax=ax,
+    )
+
+    ax.set_ylabel('AUROC (%)')
+    ax.set_xlabel('Method')
+    ax.set_title('Chest X-ray OOD detection (epistemic uncertainty)')
+    lower = max(0.0, np.floor((res['AUROC_pct'].min() - 5.0) / 5.0) * 5.0)
+    ax.set_ylim(lower, 100.0)
+    ax.tick_params(axis='x', rotation=14)
+    ax.legend(title='', loc='upper left', bbox_to_anchor=(1.01, 0.98))
+
+    plt.tight_layout()
+    if save:
+        _save(fig, 'chest_epistemic_ood_auroc_compare.pdf')
+    plt.show()
+
+
+
+# ── Plot 5: All methods combined — 1×3 (one panel per uncertainty type) ───────
+def plot_combined_methods(experiment, sharey=False, save=True):
+    """1×3 figure: each panel shows all available methods for one uncertainty type."""
     if experiment not in results:
         print(f'{experiment} not available'); return
     rd      = results[experiment]
@@ -416,34 +671,27 @@ def plot_combined_methods(experiment, normalize=False, sharey=False, save=True):
     xlabel  = XLABELS[experiment]
     u_types = ['epistemic_uncertainty', 'aleatoric_uncertainty', 'total_uncertainty']
 
-    fig, axes = plt.subplots(1, 3, figsize=(21, 5), sharey=sharey)
-    fig.suptitle(f'{experiment}  —  all methods combined'
-                 + ('  (min-max normalised per uncertainty type)' if normalize else ''), fontsize=14)
+    fig, axes = plt.subplots(1, 3, figsize=(17, 5), sharey=sharey)
+    fig.suptitle(f'{experiment}', fontsize=14)
 
     for ax, u_type in zip(axes, u_types):
         m_list    = methods.get(u_type, methods['total_uncertainty'])
-        available = [m for m in m_list if (rd / m).is_dir()]
-
-        all_ys = {m: [_ood_mean_std(rd, m, lv, u_type)[0] for lv in order] for m in available}
-        if normalize:
-            all_vals = [v for ys in all_ys.values() for v in ys if not np.isnan(v)]
-            vmin, vmax = min(all_vals), max(all_vals)
-            denom = (vmax - vmin) or 1
-            all_ys = {m: [(v - vmin) / denom for v in ys] for m, ys in all_ys.items()}
+        available = [m for m in m_list if _method_dir(rd, m) is not None]
+        all_ys = {m: [_ood_mean_var(rd, m, lv, u_type)[0] for lv in order] for m in available}
 
         for method, ys in all_ys.items():
             label = legend_map.get(method, method)
             ax.plot(order, ys, label=label, color=palette_dict.get(label),
-                    linewidth=1.5, marker='o', markersize=3)
+                    linewidth=1.5)
         ax.set_title(u_type.replace('_', ' ').title(), fontsize=10)
         ax.set_xlabel(xlabel, fontsize=9)
-        ax.set_ylabel('Normalised score' if normalize else 'Uncertainty Score', fontsize=9)
+        ax.set_ylabel('Uncertainty Score', fontsize=9)
         ax.tick_params(axis='x', rotation=45, labelsize=7)
-        ax.legend(fontsize=7)
+    ax.legend(fontsize=7)
 
     plt.tight_layout()
     if save:
-        _save(fig, f'combined_methods{"_norm" if normalize else ""}_{experiment}.pdf')
+        _save(fig, f'combined_methods_{experiment}.pdf')
     plt.show()
 
 

@@ -5,3 +5,5 @@ num_classes: 10
 
 train_subset: null 
 test_subset: null
+
+multilabel: False
