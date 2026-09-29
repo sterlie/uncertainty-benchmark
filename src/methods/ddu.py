@@ -407,8 +407,8 @@ class DDU(Method):
         aleatoric_uncertainty = entropy(predictions, multi_label=self.is_multilabel, reduction=reduction)
 
         # epistemic uncertainty is the log marginal densities 
-        # logsumexp of GDA class densities approximates -log p(z): low density (OOD) -> high uncertainty
-        epistemic_uncertainty = -logsumexp(logits_feat, multi_label=self.is_multilabel, reduction=reduction)
+        # logsumexp of GDA class densities approximates log p(z): low density (OOD) -> high uncertainty
+        epistemic_uncertainty = logsumexp(logits_feat, multi_label=self.is_multilabel, reduction=reduction)
         if self.uncertainty_per_class and epistemic_uncertainty.shape[-1] > self.num_classes:
             # multi-label GMM has one extra shared "negative" component beyond num_classes
             epistemic_uncertainty = epistemic_uncertainty[:, :self.num_classes]
