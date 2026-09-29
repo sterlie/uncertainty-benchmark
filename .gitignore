@@ -3,9 +3,10 @@ uq
 /data/
 /docs/
 /outputs/
-/results/
+/results
+/results2
 /models/
-/plots/
+src/plots
 /Morpho-MNIST/
 /swa_gaussian/
 /uncertainty-benchmark.code-workspace
