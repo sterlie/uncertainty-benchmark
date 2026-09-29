@@ -154,12 +154,12 @@ make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=all_methods  # run 
 make run-isic  EXPERIMENT=isic_ink             MODEL=EfficientNet       METHOD=all_methods
 make run-isic  EXPERIMENT=isic_drop            MODEL=EfficientNet       METHOD=all_methods
 make run-isic  EXPERIMENT=isic_hair            MODEL=EfficientNet       METHOD=all_methods
-make run-isic  EXPERIMENT=isic_age             MODEL=EfficientNet       METHOD=all_methods
+make run-isic  EXPERIMENT=isic_age             MODEL=EfficientNet       METHOD=all_methods  TRAIN_SUBSET=50 TEST_SUBSET=10
 make run-isic  EXPERIMENT=isic_skin_tone       MODEL=EfficientNet       METHOD=all_methods
 
 # MNIST examples (full dataset)
-make run-mnist EXPERIMENT=mnist_blur     MODEL=mlp METHOD=all_methods       OPTIMIZER=sgd
-make run-mnist EXPERIMENT=mnist_fracture MODEL=mlp METHOD=all_methods       OPTIMIZER=sgd 
+make run-mnist EXPERIMENT=mnist_blur     MODEL=mlp METHOD='ddu'       OPTIMIZER=sgd
+make run-mnist EXPERIMENT=mnist_fracture MODEL=mlp METHOD='swag'       OPTIMIZER=sgd 
 make run-mnist EXPERIMENT=mnist_thinning MODEL=mlp METHOD=all_methods       OPTIMIZER=sgd 
 
 # CheXpert / NIH / VinDr examples (full dataset)

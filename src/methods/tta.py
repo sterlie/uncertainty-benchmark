@@ -85,6 +85,7 @@ class TTA(Method):
 
         p_mean = torch.mean(predictions, dim=0)
         predictions_, _ = self.inference(loader, enable_augmentation=False, enable_dropout=True)
+        predictions_ = predictions_.to(self.device)
         mean_pred = predictions_.mean(dim=0)
 
         if self.is_multilabel:
