@@ -397,18 +397,13 @@ class DDU(Method):
 
         reduction = not self.uncertainty_per_class
 
-        # get predictions from raw logits 
-        if self.is_multilabel:
-            predictions = torch.sigmoid(logits)
-        else:
-            predictions = F.softmax(logits, dim=-1)
-
         # aleatroic is the entropy of predictions
-        aleatoric_uncertainty = entropy(predictions, multi_label=self.is_multilabel, reduction=reduction)
+        aleatoric_uncertainty = entropy(logits, multi_label=self.is_multilabel, reduction=reduction)
 
         # epistemic uncertainty is the log marginal densities 
         # logsumexp of GDA class densities approximates log p(z): low density (OOD) -> high uncertainty
-        epistemic_uncertainty = logsumexp(logits_feat, multi_label=self.is_multilabel, reduction=reduction)
+        log_density = logsumexp(logits_feat, multi_label=self.is_multilabel, reduction=reduction)
+        epistemic_uncertainty = -log_density
         if self.uncertainty_per_class and epistemic_uncertainty.shape[-1] > self.num_classes:
             # multi-label GMM has one extra shared "negative" component beyond num_classes
             epistemic_uncertainty = epistemic_uncertainty[:, :self.num_classes]
