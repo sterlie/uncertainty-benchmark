@@ -416,10 +416,7 @@ class DDU(Method):
         misclassify_score = total_uncertainty
         predictions = torch.sigmoid(logits) if self.is_multilabel else F.softmax(logits, dim=-1)
 
-        # aleatoric/ambiguity is only meaningful in-distribution; mask it out for OOD samples
-        # instead of computing entropy(predictions) only "if not is_ood" (ood_score/misclassify_score
-        # above stay based on the unmasked total_uncertainty so OOD-detection AUROC is unaffected).
-        aleatoric_uncertainty = torch.where(is_ood, torch.full_like(aleatoric_uncertainty, float("nan")), aleatoric_uncertainty)
+        # aleatoric is reported for every sample (as in the DDU paper); OOD flags are kept separately in is_ood
         ambiguous_score = aleatoric_uncertainty
 
         zero_uncertainty = torch.zeros_like(total_uncertainty)
