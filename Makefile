@@ -11,6 +11,7 @@ TRAIN_SUBSET ?= null
 TEST_SUBSET  ?= null
 METHOD       ?= tta
 OPTIMIZER    ?= sgd_derma 
+NUM_RUNS     ?= 1
 
 # ── Utilities ─────────────────────────────────────────────────────────────
 list-methods:
@@ -25,6 +26,7 @@ list-experiments:
 #   make run-experiment DATASET=chexpert EXPERIMENT=chexpert_age METHOD=tta TRAIN_SUBSET=100 TEST_SUBSET=50
 #   make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=mc_dropout
 #   make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=all_methods
+#   make run-experiment DATASET=isic EXPERIMENT=isic_drop METHOD=all_methods NUM_RUNS=5   # mean ± sd over 5 seeds
 run-experiment:
 	$(PYTHON) -m src.experiments.run_experiment \
 		dataset=$(DATASET) \
@@ -33,6 +35,7 @@ run-experiment:
 		method=$(METHOD) \
 		dataset.train_subset=$(TRAIN_SUBSET) \
 		dataset.test_subset=$(TEST_SUBSET) \
+		num_runs=$(NUM_RUNS) \
 		$(ARGS)
 
 # ── Quick isic / mnist experiments ──────────────────────────────────────
@@ -49,6 +52,7 @@ run-isic:
 		optimizer=$(OPTIMIZER) \
 		dataset.train_subset=$(TRAIN_SUBSET) \
 		dataset.test_subset=$(TEST_SUBSET) \
+		num_runs=$(NUM_RUNS) \
 		$(ARGS)
 
 run-mnist:
@@ -60,6 +64,7 @@ run-mnist:
 		optimizer=$(OPTIMIZER) \
 		dataset.train_subset=$(TRAIN_SUBSET) \
 		dataset.test_subset=$(TEST_SUBSET) \
+		num_runs=$(NUM_RUNS) \
 		$(ARGS)
 
 # ── Quick chest experiments ───────────────────────────────────────────────
@@ -79,6 +84,7 @@ run-chexpert:
 		optimizer=$(OPTIMIZER) \
 		dataset.train_subset=$(TRAIN_SUBSET) \
 		dataset.test_subset=$(TEST_SUBSET) \
+		num_runs=$(NUM_RUNS) \
 		$(ARGS)
 
 # Uses chexpert_amb dataset config (train.csv) so -1 uncertain labels are present
@@ -91,6 +97,7 @@ run-chexpert-amb:
 		optimizer=$(OPTIMIZER) \
 		dataset.train_subset=$(TRAIN_SUBSET) \
 		dataset.test_subset=$(TEST_SUBSET) \
+		num_runs=$(NUM_RUNS) \
 		$(ARGS)
 
 run-nih:
@@ -102,6 +109,7 @@ run-nih:
 		method=$(METHOD) \
 		dataset.train_subset=$(TRAIN_SUBSET) \
 		dataset.test_subset=$(TEST_SUBSET) \
+		num_runs=$(NUM_RUNS) \
 		$(ARGS)
 
 run-vin:
@@ -113,4 +121,5 @@ run-vin:
 		optimizer=$(OPTIMIZER) \
 		dataset.train_subset=$(TRAIN_SUBSET) \
 		dataset.test_subset=$(TEST_SUBSET) \
+		num_runs=$(NUM_RUNS) \
 		$(ARGS)

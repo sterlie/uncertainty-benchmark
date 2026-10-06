@@ -1,4 +1,4 @@
-import io, json, os, pickle
+import io, json, os, pickle, warnings
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -41,7 +41,7 @@ ORDERS = {
     'isic_ink':         ['level_1', 'level_2', 'level_3', 'level_4'],
 
     # MNIST 
-    'mnist_blur':       ['plain', 'low_severity', 'mid_severity', 'high_severity'],
+    'mnist_blur':       ['low_severity', 'mid_severity', 'high_severity'],
     'mnist_fracture':   ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
     'mnist_thinning':   ['0.1', '0.3', '0.5', '0.7', '0.9'],
 
@@ -137,23 +137,74 @@ def _to_np(v):
     return arr.ravel()
 
 
-def _ood_mean_var(rd, method, level, u_type):
+def _level_pkl_path(method_path, level):
+    """Uncertainty pickle for one level: single-model layout (ood_uncertainty_<level>.pkl),
+    falling back to the per-level-model layout (<level>/val_uncertainties.pkl)."""
+    p = method_path / f'ood_uncertainty_{level}.pkl'
+    if p.exists():
+        return p
+    p = method_path / level / 'val_uncertainties.pkl'
+    return p if p.exists() else None
+
+
+def _is_per_level_layout(rd):
+    """True if results were produced by the per-level-model flow (one model per severity level)."""
+    return (rd / 'level_method_comparison_summary.json').exists()
+
+
+def _run_dirs(mdir):
+    """Per-seed result dirs of a method: <method>/run_<i>/ when the experiment was run with
+    num_runs > 1, otherwise just the method dir itself."""
+    runs = [p for p in mdir.glob('run_*') if p.is_dir() and p.name.removeprefix('run_').isdigit()]
+    return sorted(runs, key=lambda p: int(p.name.removeprefix('run_'))) or [mdir]
+
+
+def _mean_sd(values, axis=0):
+    """Mean and sample sd across runs (sd = 0 where fewer than two finite runs)."""
+    values = np.asarray(values, dtype=float)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        mean = np.nanmean(values, axis=axis)
+        sd = np.nanstd(values, axis=axis, ddof=1)
+    return mean, np.nan_to_num(sd)
+
+
+def _plot_band(ax, x, mean, sd, color=None, label=None, alpha=0.15, **kwargs):
+    """Line for the mean across runs plus a shaded mean ± sd band (only if there is spread)."""
+    line, = ax.plot(x, mean, color=color, label=label, **kwargs)
+    sd = np.nan_to_num(np.asarray(sd, dtype=float))
+    if np.any(sd > 0):
+        mean = np.asarray(mean, dtype=float)
+        ax.fill_between(x, mean - sd, mean + sd, color=line.get_color(), alpha=alpha, linewidth=0)
+    return line
+
+
+def _ood_run_means(rd, method, level, u_type):
+    """Per-run mean uncertainty for one method/level (one value per run)."""
     method_path = _method_dir(rd, method)
     if method_path is None:
-        return np.nan, 0, 0
-    p = method_path / f'ood_uncertainty_{level}.pkl'
-    if not p.exists():
-        return np.nan, 0, 0
-    d = load_pkl(p)
-    if method == 'ddu' and u_type == 'epistemic_uncertainty':
-        if 'total_uncertainty' not in d or 'aleatoric_uncertainty' not in d:
-            return np.nan, 0, 0
-        arr = _to_np(d['total_uncertainty']) - _to_np(d['aleatoric_uncertainty'])
-    elif u_type in d:
-        arr = _to_np(d[u_type])
-    else:
-        return np.nan, 0, 0
-    return np.nanmean(arr), np.nanvar(arr), len(arr)
+        return [np.nan]
+    means = []
+    for run_dir in _run_dirs(method_path):
+        p = _level_pkl_path(run_dir, level)
+        arr = _extract_uncertainty_array(load_pkl(p), method, u_type) if p is not None else None
+        means.append(np.nanmean(arr) if arr is not None and np.isfinite(arr).any() else np.nan)
+    return means
+
+
+def _ood_mean_sd(rd, method, level, u_type):
+    """Mean uncertainty for one method/level, averaged over runs, and its sd across runs."""
+    return _mean_sd(_ood_run_means(rd, method, level, u_type))
+
+
+def _finite_auroc(labels, scores):
+    """AUROC over samples with a finite score (DDU aleatoric is NaN for samples it flags as OOD)."""
+    labels, scores = np.asarray(labels), np.asarray(scores, dtype=float)
+    mask = np.isfinite(scores)
+    labels, scores = labels[mask], scores[mask]
+    if len(np.unique(labels)) < 2:
+        return np.nan
+    return roc_auc_score(labels, scores)
 
 
 def _save(fig, name):
@@ -200,16 +251,8 @@ def plot_method_grid(experiment, u_types=None, save=True):
             if method not in methods.get(u_type, methods['total_uncertainty']):
                 continue
             clr = U_COLORS.get(u_type, 'steelblue')
-            ys, errs = [], []
-            for lv in order:
-                m, v, _ = _ood_mean_var(rd, method, lv, u_type)
-                ys.append(m)
-                errs.append(v)
-            ax.plot(order, ys, color=clr, linewidth=1.5, label=u_type.replace('_', ' '))
-            #ax.fill_between(order,
-            #                [y - e for y, e in zip(ys, errs)],
-            #                [y + e for y, e in zip(ys, errs)],
-            #                alpha=0.15, color=clr)
+            ys, sds = zip(*(_ood_mean_sd(rd, method, lv, u_type) for lv in order))
+            _plot_band(ax, order, ys, sds, color=clr, linewidth=1.5, label=u_type.replace('_', ' '))
         ax.set_title(legend_map.get(method, method), fontsize=9)
         ax.set_xlabel(xlabel, fontsize=8)
         ax.set_ylabel('Uncertainty Score', fontsize=8)
@@ -235,15 +278,15 @@ def plot_distribution(experiment, save=True):
     order     = ORDERS[experiment]
     xlabel    = XLABELS[experiment]
     available = [m for m in methods['total_uncertainty'] if (rd / m).is_dir()]
-    ref       = available[0] if available else None
+    ref       = _run_dirs(rd / available[0])[0] if available else None
 
     if experiment.startswith('isic_'):
         counts = _isic_distribution_counts(experiment)
     else:
         counts = []
         for lv in order:
-            p = rd / ref / f'ood_uncertainty_{lv}.pkl' if ref else None
-            if p and p.exists():
+            p = _level_pkl_path(ref, lv) if ref else None
+            if p is not None:
                 d = load_pkl(p)
                 counts.append(len(_to_np(next(iter(d.values())))))
             else:
@@ -268,10 +311,14 @@ def plot_ood_auroc(experiment, u_type='total_uncertainty', save=True):
 
     AUROC is computed per OOD level by concatenating ID uncertainty
     (from valid_uncertainties.pkl) and that level's OOD uncertainty.
+    With several runs the line is the mean AUROC and the band is ± sd across runs.
     """
     if experiment not in results:
         print(f'{experiment} not available'); return
     rd        = results[experiment]
+    if _is_per_level_layout(rd):
+        print(f'{experiment} was run with one model per level (no shared ID set) — OOD AUROC is not defined.')
+        return
     order     = ORDERS[experiment]
     xlabel    = XLABELS[experiment]
     m_list    = methods.get(u_type, methods['total_uncertainty'])
@@ -285,32 +332,13 @@ def plot_ood_auroc(experiment, u_type='total_uncertainty', save=True):
         if mdir is None:
             continue
 
-        id_path = mdir / 'valid_uncertainties.pkl'
-        if not id_path.exists():
+        run_aurocs = [a for a in (_ood_auroc_per_level(run_dir, method, order, u_type)
+                                  for run_dir in _run_dirs(mdir)) if a is not None]
+        if not run_aurocs:
             continue
-        id_d = load_pkl(id_path)
-        id_scores = _extract_uncertainty_array(id_d, method, u_type)
-        if id_scores is None or len(id_scores) == 0:
-            continue
-
-        aurocs = []
-        for lv in order:
-            p = mdir / f'ood_uncertainty_{lv}.pkl'
-            if not p.exists():
-                aurocs.append(np.nan); continue
-            ood_d = load_pkl(p)
-            ood_scores = _extract_uncertainty_array(ood_d, method, u_type)
-            if ood_scores is None or len(ood_scores) == 0:
-                aurocs.append(np.nan); continue
-
-            labels = np.concatenate([np.zeros(len(id_scores)), np.ones(len(ood_scores))])
-            scores = np.concatenate([id_scores, ood_scores])
-            try:
-                aurocs.append(roc_auc_score(labels, scores))
-            except Exception:
-                aurocs.append(np.nan)
+        mean, sd = _mean_sd(run_aurocs)
         label = legend_map.get(method, method)
-        ax.plot(order, aurocs, label=label, color=palette_dict.get(label), linewidth=1.5)
+        _plot_band(ax, order, mean, sd, color=palette_dict.get(label), label=label, linewidth=1.5)
 
     ax.set_xlabel(xlabel)
     ax.set_ylabel('AUROC')
@@ -322,12 +350,40 @@ def plot_ood_auroc(experiment, u_type='total_uncertainty', save=True):
     plt.show()
 
 
+def _ood_auroc_per_level(run_dir, method, order, u_type):
+    """OOD-detection AUROC per level for one run (None if the run has no ID uncertainties)."""
+    id_path = run_dir / 'valid_uncertainties.pkl'
+    if not id_path.exists():
+        return None
+    id_scores = _extract_uncertainty_array(load_pkl(id_path), method, u_type)
+    if id_scores is None or len(id_scores) == 0:
+        return None
+
+    aurocs = []
+    for lv in order:
+        p = run_dir / f'ood_uncertainty_{lv}.pkl'
+        if not p.exists():
+            aurocs.append(np.nan); continue
+        ood_scores = _extract_uncertainty_array(load_pkl(p), method, u_type)
+        if ood_scores is None or len(ood_scores) == 0:
+            aurocs.append(np.nan); continue
+
+        labels = np.concatenate([np.zeros(len(id_scores)), np.ones(len(ood_scores))])
+        scores = np.concatenate([id_scores, ood_scores])
+        try:
+            aurocs.append(_finite_auroc(labels, scores))
+        except Exception:
+            aurocs.append(np.nan)
+    return aurocs
+
+
 def plot_misclassification_from_id(experiment, u_type='total_uncertainty', save=True):
     """Bar chart of misclassification-detection AUROC per method from ID uncertainties.
 
     Uses valid_uncertainties.pkl for each method and computes AUROC between:
     - true_labels: predicted_labels != ground_truth
     - scores: selected uncertainty type
+    With several runs the bar is the mean AUROC and the error bar is ± sd across runs.
     """
     if experiment not in results:
         print(f'{experiment} not available'); return
@@ -339,39 +395,41 @@ def plot_misclassification_from_id(experiment, u_type='total_uncertainty', save=
         if mdir is None:
             continue
 
-        p = mdir / 'valid_uncertainties.pkl'
-        if not p.exists():
-            continue
+        for run_dir in _run_dirs(mdir):
+            p = run_dir / 'valid_uncertainties.pkl'
+            if not p.exists():
+                continue
 
-        data = load_pkl(p)
-        uncertainty = _extract_uncertainty_array(data, method, u_type)
-        gt = data.get('ground_truth')
-        pred = data.get('predicted_labels')
-        if uncertainty is None or gt is None or pred is None:
-            continue
+            data = load_pkl(p)
+            uncertainty = _extract_uncertainty_array(data, method, u_type)
+            gt = data.get('ground_truth')
+            pred = data.get('predicted_labels')
+            if uncertainty is None or gt is None or pred is None:
+                continue
 
-        gt = _to_np(gt).astype(int)
-        pred = _to_np(pred).astype(int)
-        if len(uncertainty) != len(gt) or len(pred) != len(gt):
-            continue
+            gt = _to_np(gt).astype(int)
+            pred = _to_np(pred).astype(int)
+            if len(uncertainty) != len(gt) or len(pred) != len(gt):
+                continue
 
-        true_labels = (pred != gt).astype(int)
-        if len(np.unique(true_labels)) < 2:
-            auroc = np.nan
-        else:
-            try:
-                auroc = roc_auc_score(true_labels, uncertainty)
-            except Exception:
+            true_labels = (pred != gt).astype(int)
+            if len(np.unique(true_labels)) < 2:
                 auroc = np.nan
+            else:
+                try:
+                    auroc = _finite_auroc(true_labels, uncertainty)
+                except Exception:
+                    auroc = np.nan
 
-        rows.append({'Method': legend_map.get(method, method), 'AUROC': auroc})
+            rows.append({'Method': legend_map.get(method, method), 'Run': run_dir.name, 'AUROC': auroc})
 
     if not rows:
         print(f'No valid ID uncertainty results found for {experiment}'); return
 
     res = pd.DataFrame(rows)
     fig, ax = plt.subplots(figsize=(10, 6))
-    sns.barplot(x='Method', y='AUROC', hue='Method', data=res, palette=palette_dict, legend=False, ax=ax)
+    sns.barplot(x='Method', y='AUROC', hue='Method', data=res, palette=palette_dict, legend=False,
+                errorbar='sd', capsize=0.2, ax=ax)
     ax.set_ylabel('AUROC (Misclassification Detection)')
     ax.set_ylim([0.4, 1.0])
     plt.tight_layout()
@@ -399,20 +457,22 @@ def _amb_task_auroc_barplot(experiment, json_key, title, filename_prefix, save=T
         mdir = _method_dir(rd, m)
         if mdir is None:
             continue
-        perf_path = mdir / 'amb_task_performance.json'
-        if not perf_path.exists():
-            continue
-        with open(perf_path) as f:
-            perf = json.load(f)
-        auroc = perf.get(json_key, float('nan'))
-        rows.append({'Method': legend_map.get(m, m), 'AUROC': auroc})
+        for run_dir in _run_dirs(mdir):
+            perf_path = run_dir / 'amb_task_performance.json'
+            if not perf_path.exists():
+                continue
+            with open(perf_path) as f:
+                perf = json.load(f)
+            auroc = perf.get(json_key, float('nan'))
+            rows.append({'Method': legend_map.get(m, m), 'Run': run_dir.name, 'AUROC': auroc})
 
     if not rows:
         print(f'No amb_task_performance.json results found for {experiment}'); return
 
     res = pd.DataFrame(rows)
     fig, ax = plt.subplots(figsize=(10, 5))
-    sns.barplot(x='Method', y='AUROC', data=res, palette=palette_dict, ax=ax)
+    sns.barplot(x='Method', y='AUROC', hue='Method', data=res, palette=palette_dict, legend=False,
+                errorbar='sd', capsize=0.2, ax=ax)
     ymin = min(0.4, max(0.0, res['AUROC'].min() - 0.05))
     ax.set_ylim(ymin, 1.0)
     ax.set_ylabel('AUROC')
@@ -459,13 +519,14 @@ def _amb_task_auroc_compare_barplot(exp1, exp2, col1, col2, json_key, title, fil
             mdir = _method_dir(rd, m)
             if mdir is None:
                 continue
-            perf_path = mdir / 'amb_task_performance.json'
-            if not perf_path.exists():
-                continue
-            with open(perf_path) as f:
-                perf = json.load(f)
-            auroc = perf.get(json_key, float('nan'))
-            rows.append({'Method': legend_map.get(m, m), 'Experiment': exp, 'AUROC': auroc})
+            for run_dir in _run_dirs(mdir):
+                perf_path = run_dir / 'amb_task_performance.json'
+                if not perf_path.exists():
+                    continue
+                with open(perf_path) as f:
+                    perf = json.load(f)
+                auroc = perf.get(json_key, float('nan'))
+                rows.append({'Method': legend_map.get(m, m), 'Experiment': exp, 'Run': run_dir.name, 'AUROC': auroc})
 
     if not rows:
         print(f'No amb_task_performance.json results found for {exp1} / {exp2}'); return
@@ -476,7 +537,8 @@ def _amb_task_auroc_compare_barplot(exp1, exp2, col1, col2, json_key, title, fil
         exp2: col2,
     }
     fig, ax = plt.subplots(figsize=(12, 5))
-    sns.barplot(x='Method', y='AUROC', hue='Experiment', data=res, palette=hue_palette, ax=ax)
+    sns.barplot(x='Method', y='AUROC', hue='Experiment', data=res, palette=hue_palette,
+                errorbar='sd', capsize=0.1, ax=ax)
     ymin = min(0.4, max(0.0, res['AUROC'].min() - 0.05))
     ax.set_ylim(ymin, 1.0)
     ax.set_ylabel('AUROC')
@@ -527,12 +589,8 @@ def _extract_uncertainty_array(d, method, u_type):
     return _to_np(d[u_type])
 
 
-def _ood_auroc_from_pickles(rd, method, experiment, u_type='epistemic_uncertainty'):
-    """Compute OOD AUROC from saved ID/OOD uncertainty pickles for one method/experiment."""
-    mdir = _method_dir(rd, method)
-    if mdir is None:
-        return np.nan
-
+def _ood_auroc_from_pickles(mdir, method, experiment, u_type='epistemic_uncertainty'):
+    """Compute OOD AUROC from saved ID/OOD uncertainty pickles in one (run) result dir."""
     id_path = mdir / 'valid_uncertainties.pkl'
     if not id_path.exists():
         return np.nan
@@ -580,7 +638,7 @@ def _ood_auroc_from_pickles(rd, method, experiment, u_type='epistemic_uncertaint
     labels = np.concatenate([np.zeros(len(id_scores)), np.ones(len(ood_all))])
     scores = np.concatenate([id_scores, ood_all])
     try:
-        return float(roc_auc_score(labels, scores))
+        return float(_finite_auroc(labels, scores))
     except Exception:
         return np.nan
 
@@ -620,13 +678,18 @@ def plot_chest_epistemic_auroc_compare(date_overrides=None, save=True):
     for exp, label, _ in exp_specs:
         rd = RESULTS_DIR / date_overrides[exp] / exp
         for method in method_order:
-            auroc = _ood_auroc_from_pickles(rd, method, exp, u_type='epistemic_uncertainty')
-            rows.append({
-                'MethodKey': method,
-                'Method': legend_map.get(method, method),
-                'Shift': label,
-                'AUROC_pct': np.nan if np.isnan(auroc) else auroc * 100.0,
-            })
+            mdir = _method_dir(rd, method)
+            if mdir is None:
+                continue
+            for run_dir in _run_dirs(mdir):
+                auroc = _ood_auroc_from_pickles(run_dir, method, exp, u_type='epistemic_uncertainty')
+                rows.append({
+                    'MethodKey': method,
+                    'Method': legend_map.get(method, method),
+                    'Shift': label,
+                    'Run': run_dir.name,
+                    'AUROC_pct': np.nan if np.isnan(auroc) else auroc * 100.0,
+                })
 
     res = pd.DataFrame(rows)
     res = res.dropna(subset=['AUROC_pct'])
@@ -643,6 +706,8 @@ def plot_chest_epistemic_auroc_compare(date_overrides=None, save=True):
         order=[legend_map.get(m, m) for m in method_order],
         hue_order=[label for _, label, _ in exp_specs],
         palette=hue_palette,
+        errorbar='sd',
+        capsize=0.1,
         ax=ax,
     )
 
@@ -677,12 +742,10 @@ def plot_combined_methods(experiment, sharey=False, save=True):
     for ax, u_type in zip(axes, u_types):
         m_list    = methods.get(u_type, methods['total_uncertainty'])
         available = [m for m in m_list if _method_dir(rd, m) is not None]
-        all_ys = {m: [_ood_mean_var(rd, m, lv, u_type)[0] for lv in order] for m in available}
-
-        for method, ys in all_ys.items():
+        for method in available:
+            ys, sds = zip(*(_ood_mean_sd(rd, method, lv, u_type) for lv in order))
             label = legend_map.get(method, method)
-            ax.plot(order, ys, label=label, color=palette_dict.get(label),
-                    linewidth=1.5)
+            _plot_band(ax, order, ys, sds, color=palette_dict.get(label), label=label, linewidth=1.5)
         ax.set_title(u_type.replace('_', ' ').title(), fontsize=10)
         ax.set_xlabel(xlabel, fontsize=9)
         ax.set_ylabel('Uncertainty Score', fontsize=9)
@@ -725,7 +788,7 @@ def isic_bin_plot(experiment, focus_label=None, save=True):
 
     totals, sicks = [], []
     for lv in order:
-        p = rd / ref / f'ood_uncertainty_{lv}.pkl'
+        p = _run_dirs(rd / ref)[0] / f'ood_uncertainty_{lv}.pkl'
         d  = load_pkl(p)
         gt = d.get('ground_truth')
         if gt is None:
@@ -804,7 +867,7 @@ def _pkl_bin_counts(rd: Path, ref: str, order: list) -> dict:
     """Fallback: count total and sick (row_sum > 0) from pkl ground_truth (VinDr)."""
     out = {}
     for lv in order:
-        p = rd / ref / f'ood_uncertainty_{lv}.pkl'
+        p = _run_dirs(rd / ref)[0] / f'ood_uncertainty_{lv}.pkl'
         if not p.exists():
             out[lv] = (0, 0); continue
         d  = load_pkl(p)

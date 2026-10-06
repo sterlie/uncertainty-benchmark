@@ -1,8 +1,8 @@
 name: "ddu"
 classification: basic
 uncertainty: entropy
-# ood_threshold: 0.0
-# : 100.0
-# ood_threshold: 3570.0
-ood_threshold: 0.00001
+# DDU flags a sample OOD if its GDA log-density <= threshold; aleatoric is NaN for those samples.
+# Leave ood_log_density_threshold null to calibrate it as the ood_quantile of training log-densities.
+ood_log_density_threshold: null
+ood_quantile: 0.05
 misclassify_threshold: 0.0

@@ -1,3 +1,4 @@
+import itertools
 import json
 import os
 import pickle
@@ -229,6 +230,17 @@ def _resolve_methods_to_run(cfg: DictConfig) -> List[str]:
     return unique_methods
 
 
+def _run_name(run_idx: int, num_runs: int) -> str:
+    """Sub-directory for one repetition. Empty for a single run so the original layout is kept."""
+    return f"run_{run_idx}" if num_runs > 1 else ""
+
+
+def _nanmean(v) -> float:
+    """Mean that ignores NaNs (DDU sets aleatoric uncertainty to NaN for samples it flags as OOD)."""
+    arr = v.detach().float().cpu().numpy() if isinstance(v, torch.Tensor) else np.asarray(v, dtype=float)
+    return float(np.nanmean(arr)) if np.isfinite(arr).any() else float("nan")
+
+
 def _run_per_level_experiments(
     cfg: DictConfig,
     dataset_name: str,
@@ -239,6 +251,7 @@ def _run_per_level_experiments(
     methods_to_run: List[str],
     train_loaders: Dict[str, DataLoader],
     val_loaders: Dict[str, DataLoader],
+    num_runs: int = 1,
 ) -> Dict[str, Dict[str, Dict[str, float]]]:
     """Train one model per severity level (matching old Uncertainty_Benchmark
     load_aleatoric_data3): each level gets its own full train/val set and is
@@ -246,25 +259,29 @@ def _run_per_level_experiments(
     comparison_summary: Dict[str, Dict[str, Dict[str, float]]] = {}
     uncertainty_keys = ("total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty")
 
-    for level_name, train_loader in train_loaders.items():
+    for run_idx, (level_name, train_loader) in itertools.product(range(num_runs), train_loaders.items()):
         val_loader = val_loaders[level_name]
-        comparison_summary[level_name] = {}
+        run_name = _run_name(run_idx, num_runs)
+        run_seed = int(cfg.seed) + run_idx
+        run_summary = comparison_summary.setdefault(run_name, {}) if run_name else comparison_summary
+        run_summary[level_name] = {}
 
         for method_name in methods_to_run:
-            print({"level": level_name, "method": method_name, "status": "start"})
-            set_random_seed(int(cfg.seed))
+            print({"run": run_idx, "seed": run_seed, "level": level_name, "method": method_name, "status": "start"})
+            set_random_seed(run_seed)
 
             method_cfg = MethodFactory.load_method_config(cfg, method_name)
+            method_cfg.seed = run_seed
             method = MethodFactory.create(method_cfg)
 
-            model_dir  = project_root / "models" / dataset_name / method_name / level_name
-            result_dir = results_root / run_date / experiment_name / method_name / level_name
-            plot_dir   = project_root / "plots"  / run_date / experiment_name / method_name / level_name
+            model_dir  = project_root / "models" / dataset_name / method_name / run_name / level_name
+            result_dir = results_root / run_date / experiment_name / method_name / run_name / level_name
+            plot_dir   = project_root / "plots"  / run_date / experiment_name / method_name / run_name / level_name
 
             summary_path = result_dir / "uncertainties_summary.json"
             if summary_path.exists():
                 with open(summary_path) as f:
-                    comparison_summary[level_name][method_name] = json.load(f)
+                    run_summary[level_name][method_name] = json.load(f)
                 print({"level": level_name, "method": method_name, "status": "skipped (results exist)"})
                 continue
 
@@ -290,16 +307,11 @@ def _run_per_level_experiments(
             with open(result_dir / "val_uncertainties.pkl", "wb") as f:
                 pickle.dump(uncertainty, f)
 
-            summary = {
-                k: float(torch.mean(uncertainty[k]).item())
-                if isinstance(uncertainty[k], torch.Tensor)
-                else float(np.mean(uncertainty[k]))
-                for k in uncertainty_keys
-            }
+            summary = {k: _nanmean(uncertainty[k]) for k in uncertainty_keys}
             with open(summary_path, "w", encoding="utf-8") as f:
                 json.dump(summary, f, indent=2)
 
-            comparison_summary[level_name][method_name] = summary
+            run_summary[level_name][method_name] = summary
             print({"level": level_name, "method": method_name, "status": "done"})
 
     comparison_path = results_root / run_date / experiment_name / "level_method_comparison_summary.json"
@@ -341,14 +353,26 @@ def main(cfg: DictConfig) -> None:
     run_date = Path(HydraConfig.get().runtime.output_dir).parent.name
     results_root = project_root / "results"
 
-    def _find_existing_result(method_name: str, marker: str):
-        """Return existing result dir for this experiment/method on today's date, or None."""
-        candidate = results_root / run_date / experiment_name / method_name / marker
+    def _find_existing_result(method_name: str, run_name: str, marker: str):
+        """Return existing result dir for this experiment/method/run on today's date, or None."""
+        candidate = results_root / run_date / experiment_name / method_name / run_name / marker
         return candidate.parent if candidate.exists() else None
+
+    # Repeat every method num_runs times with seeds seed, seed+1, ... (data splits stay fixed,
+    # they are built above with cfg.seed). Results go to <method>/run_<i>/ when num_runs > 1.
+    num_runs = int(cfg.get("num_runs", 1))
+    if num_runs < 1:
+        raise ValueError(f"num_runs must be >= 1, got {num_runs}")
 
     methods_to_run = _resolve_methods_to_run(cfg)
     comparison_summary: Dict[str, Dict[str, Dict[str, float]]] = {}
-    auroc_summary: Dict[str, Dict[str, float]] = {}
+    auroc_runs: Dict[str, List[Dict[str, float]]] = {}
+
+    def _store_summary(method_name: str, run_name: str, summary) -> None:
+        if run_name:
+            comparison_summary.setdefault(method_name, {})[run_name] = summary
+        else:
+            comparison_summary[method_name] = summary
 
     if isinstance(base_train_loader, dict):
         # Adapter returned one train/val loader per severity level (e.g. MNIST blur) —
@@ -363,28 +387,32 @@ def main(cfg: DictConfig) -> None:
             methods_to_run=methods_to_run,
             train_loaders=base_train_loader,
             val_loaders=base_val_loader,
+            num_runs=num_runs,
         )
         return
 
-    for method_name in methods_to_run:
-        print({"method": method_name, "status": "start"})
-        set_random_seed(int(cfg.seed))
+    for run_idx, method_name in itertools.product(range(num_runs), methods_to_run):
+        run_name = _run_name(run_idx, num_runs)
+        run_seed = int(cfg.seed) + run_idx
+        print({"run": run_idx, "seed": run_seed, "method": method_name, "status": "start"})
+        set_random_seed(run_seed)
 
         method_cfg = MethodFactory.load_method_config(cfg, method_name)
+        method_cfg.seed = run_seed  # e.g. ensemble seeds its members from config.seed
         method = MethodFactory.create(method_cfg)
 
-        model_dir  = project_root / "models" / dataset_name / method_name
-        result_dir = results_root / run_date / experiment_name / method_name
-        plot_dir   = project_root / "plots"  / run_date / experiment_name / method_name
+        model_dir  = project_root / "models" / dataset_name / method_name / run_name
+        result_dir = results_root / run_date / experiment_name / method_name / run_name
+        plot_dir   = project_root / "plots"  / run_date / experiment_name / method_name / run_name
 
         # Skip if results exist from today
         _marker_name = "amb_task_performance.json" if is_amb else "uncertainties_summary.json"
-        _existing = _find_existing_result(method_name, _marker_name)
+        _existing = _find_existing_result(method_name, run_name, _marker_name)
         if _existing is not None:
-            print({"method": method_name, "status": "skipped (results exist)", "path": str(_existing)})
+            print({"run": run_idx, "method": method_name, "status": "skipped (results exist)", "path": str(_existing)})
             if not is_amb:
                 with open(_existing / _marker_name) as _f:
-                    comparison_summary[method_name] = json.load(_f)
+                    _store_summary(method_name, run_name, json.load(_f))
             continue
         model_dir.mkdir(parents=True, exist_ok=True)
         result_dir.mkdir(parents=True, exist_ok=True)
@@ -418,7 +446,7 @@ def main(cfg: DictConfig) -> None:
                 plot_dir=amb_plot_dir,
                 num_samples=int(cfg.get("num_samples", -1)),
             )
-            comparison_summary[method_name] = {}
+            _store_summary(method_name, run_name, {})
             continue
 
         # Measure uncertainty on clean validation set (ID baseline)
@@ -453,12 +481,7 @@ def main(cfg: DictConfig) -> None:
 
         uncertainty_keys = ("total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty")
         method_summary = {
-            level: {
-                k: float(torch.mean(plot_uncertainties[level][k]).item())
-                if isinstance(plot_uncertainties[level][k], torch.Tensor)
-                else float(np.mean(plot_uncertainties[level][k]))
-                for k in uncertainty_keys
-            }
+            level: {k: _nanmean(plot_uncertainties[level][k]) for k in uncertainty_keys}
             for level in level_names
         }
 
@@ -498,22 +521,31 @@ def main(cfg: DictConfig) -> None:
                 result_dir=result_dir / "sensitivity",
                 plot_dir=plot_dir / "sensitivity",
             )
-            auroc_summary[method_name] = {
-                k: v for k, v in decomp_perf.items() if k.startswith("auroc_")
-            }
+            auroc_runs.setdefault(method_name, []).append(
+                {k: v for k, v in decomp_perf.items() if k.startswith("auroc_")}
+            )
 
 
-        comparison_summary[method_name] = method_summary
-        print({"method": method_name, "status": "done"})
+        _store_summary(method_name, run_name, method_summary)
+        print({"run": run_idx, "method": method_name, "status": "done"})
 
-    if len(methods_to_run) > 1:
+    if len(methods_to_run) > 1 or num_runs > 1:
         comparison_path = results_root / run_date / experiment_name / "method_comparison_summary.json"
         comparison_path.parent.mkdir(parents=True, exist_ok=True)
         with open(comparison_path, "w", encoding="utf-8") as f:
             json.dump(comparison_summary, f, indent=2)
         print({"comparison_summary": str(comparison_path)})
 
-    # ── Cross-method AUROC comparison ─────────────────────────────────────
+    # ── Cross-method AUROC comparison (mean ± sd over runs) ───────────────
+    auroc_summary = {
+        m: {k: float(np.nanmean([r.get(k, np.nan) for r in runs])) for k in runs[0]}
+        for m, runs in auroc_runs.items()
+    }
+    auroc_std = {
+        m: {k: float(np.nanstd([r.get(k, np.nan) for r in runs], ddof=1)) if len(runs) > 1 else 0.0
+            for k in runs[0]}
+        for m, runs in auroc_runs.items()
+    }
     if auroc_summary:
         cmp_plot_dir  = project_root / "plots"   / run_date / experiment_name / "comparison"
         cmp_result_dir = results_root / run_date / experiment_name
@@ -522,6 +554,11 @@ def main(cfg: DictConfig) -> None:
 
         with open(cmp_result_dir / "auroc_summary.json", "w", encoding="utf-8") as f:
             json.dump(auroc_summary, f, indent=2)
+        if num_runs > 1:
+            with open(cmp_result_dir / "auroc_summary_std.json", "w", encoding="utf-8") as f:
+                json.dump(auroc_std, f, indent=2)
+            with open(cmp_result_dir / "auroc_summary_runs.json", "w", encoding="utf-8") as f:
+                json.dump(auroc_runs, f, indent=2)
 
         method_names_with_auroc = list(auroc_summary.keys())
         colors = plt.cm.tab10.colors
@@ -537,8 +574,12 @@ def main(cfg: DictConfig) -> None:
         fig, ax = plt.subplots(figsize=(10, 5))
         x = np.arange(len(level_names))
         for i, mname in enumerate(method_names_with_auroc):
-            per_level = [auroc_summary[mname].get(f"auroc_{_cmp_uq_key}_{lvl}", float("nan")) for lvl in level_names]
+            per_level = np.array([auroc_summary[mname].get(f"auroc_{_cmp_uq_key}_{lvl}", np.nan) for lvl in level_names])
+            per_level_sd = np.array([auroc_std[mname].get(f"auroc_{_cmp_uq_key}_{lvl}", 0.0) for lvl in level_names])
             ax.plot(x, per_level, marker="o", label=mname, color=colors[i % len(colors)])
+            if num_runs > 1:
+                ax.fill_between(x, per_level - per_level_sd, per_level + per_level_sd,
+                                color=colors[i % len(colors)], alpha=0.15)
         ax.axhline(0.5, color="gray", linestyle="--", linewidth=1, label="random")
         ax.set_xticks(x)
         ax.set_xticklabels(level_names, rotation=30, ha="right")
@@ -552,8 +593,10 @@ def main(cfg: DictConfig) -> None:
 
         # Mean AUROC bar chart
         mean_aurocs = [auroc_summary[m].get("auroc_mean", float("nan")) for m in method_names_with_auroc]
+        sd_aurocs = [auroc_std[m].get("auroc_mean", 0.0) for m in method_names_with_auroc]
         fig, ax = plt.subplots(figsize=(8, 4))
         ax.bar(np.arange(len(method_names_with_auroc)), mean_aurocs,
+               yerr=sd_aurocs if num_runs > 1 else None, capsize=4,
                color=[colors[i % len(colors)] for i in range(len(method_names_with_auroc))])
         ax.axhline(0.5, color="gray", linestyle="--", linewidth=1, label="random")
         ax.set_xticks(np.arange(len(method_names_with_auroc)))
@@ -567,7 +610,7 @@ def main(cfg: DictConfig) -> None:
         plt.close(fig)
         print({"auroc_comparison": str(cmp_plot_dir)})
 
-    print({"status": "done", "methods": methods_to_run, "levels": level_names, "output_dir": os.getcwd() + "/results"})
+    print({"status": "done", "methods": methods_to_run, "num_runs": num_runs, "levels": level_names, "output_dir": os.getcwd() + "/results"})
 
 
 if __name__ == "__main__":

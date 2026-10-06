@@ -287,7 +287,10 @@ class DDU(Method):
         self.key = list(self.named_modules.keys())[-2]
         self.features = None
         apply_sn(self.model)
-        self.ood_threshold = config.method.get('ood_threshold', 0.00001)
+        # OOD if gda.log_density(features) <= ood_threshold. If not set explicitly, it is calibrated
+        # as the ood_quantile of the training log-densities (default: 5% of training samples flagged OOD).
+        self.ood_threshold = config.method.get('ood_log_density_threshold', None)
+        self.ood_quantile = config.method.get('ood_quantile', 0.05)
         self.misclassify_threshold = config.method.get('misclassify_threshold', self.ood_threshold)
         self.embeddings = self.labels = self.gaussian_models = self.jitter_eps = None
 
@@ -356,6 +359,18 @@ class DDU(Method):
             num_classes=self.num_classes,
             multi_label=self.is_multilabel,
         )
+        self.calibrate_ood_threshold()
+
+    def calibrate_ood_threshold(self):
+        if self.config.method.get('ood_log_density_threshold', None) is not None:
+            return
+        with torch.no_grad():
+            log_density = torch.cat([
+                torch.logsumexp(self.gaussian_models.log_prob(chunk[:, None, :]), dim=1)
+                for chunk in self.embeddings.split(1024)
+            ])
+        self.ood_threshold = torch.quantile(log_density.float().cpu(), self.ood_quantile).item()
+        print(f"DDU OOD log-density threshold ({self.ood_quantile:.0%} quantile of train): {self.ood_threshold:.2f}")
 
     def run_model(self, inputs: torch.Tensor):
         if self.classification == 'basic':
@@ -404,19 +419,21 @@ class DDU(Method):
         # logsumexp of GDA class densities approximates log p(z): low density (OOD) -> high uncertainty
         log_density = logsumexp(logits_feat, multi_label=self.is_multilabel, reduction=reduction)
         epistemic_uncertainty = -log_density
+
         if self.uncertainty_per_class and epistemic_uncertainty.shape[-1] > self.num_classes:
             # multi-label GMM has one extra shared "negative" component beyond num_classes
             epistemic_uncertainty = epistemic_uncertainty[:, :self.num_classes]
         total_uncertainty = aleatoric_uncertainty + epistemic_uncertainty
 
-        # gda.log_density(test_features) <= ood_threshold flags a sample as OOD
-        is_ood = self.ood_threshold <= epistemic_uncertainty
+        # low density -> OOD: gda.log_density(test_features) <= ood_threshold
+        is_ood = log_density <= self.ood_threshold
 
         ood_score = total_uncertainty
         misclassify_score = total_uncertainty
         predictions = torch.sigmoid(logits) if self.is_multilabel else F.softmax(logits, dim=-1)
 
-        # aleatoric is reported for every sample (as in the DDU paper); OOD flags are kept separately in is_ood
+        # aleatoric is only defined in-distribution (predict only "if not is_ood"); NaN for OOD samples
+        aleatoric_uncertainty = torch.where(is_ood, torch.full_like(aleatoric_uncertainty, float("nan")), aleatoric_uncertainty)
         ambiguous_score = aleatoric_uncertainty
 
         zero_uncertainty = torch.zeros_like(total_uncertainty)
@@ -459,6 +476,7 @@ class DDU(Method):
                 pickle.dump({
                     'gaussian_models': self.gaussian_models,
                     'jitter_eps': self.jitter_eps,
+                    'ood_threshold': self.ood_threshold,
                 }, f)
 
     def load_model(self, path: str, train_loader=None, val_loader=None) -> None:
@@ -476,6 +494,12 @@ class DDU(Method):
                 gmm_data = pickle.load(f)
                 self.gaussian_models = gmm_data['gaussian_models']
                 self.jitter_eps = gmm_data['jitter_eps']
+            if self.config.method.get('ood_log_density_threshold', None) is None:
+                self.ood_threshold = gmm_data.get('ood_threshold')
+                if self.ood_threshold is None and train_loader is not None:
+                    # GMM saved before threshold calibration existed: refit (deterministic) to calibrate
+                    self.train_uncertainty_method(train_loader, val_loader)
+                    self.save_model(path)
         elif train_loader is not None:
             # If GMM pickle doesn't exist but training loader is available, train GMMs
             print(f"GMM models not found at {gmm_path}. Training GMMs from training data...")

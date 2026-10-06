@@ -294,12 +294,16 @@ def run_uncertainty_decomposition(
             _to_numpy(uncertainties[name][uq_key]) for name in level_names
         ])
 
-        mean = np.mean(all_vals)
-        std = np.std(all_vals)
+        mean = np.nanmean(all_vals)
+        std = np.nanstd(all_vals)
 
         for name in level_names:
             arr = _to_numpy(uncertainties[name][uq_key])
-            uncertainties[name][uq_key] = (arr - mean) / (std + 1e-10)
+            arr = (arr - mean) / (std + 1e-10)
+            if uq_key == "aleatoric_uncertainty":
+                # NaN aleatoric = sample flagged OOD (DDU): epistemic dominates by definition
+                arr = np.where(np.isnan(arr), -np.inf, arr)
+            uncertainties[name][uq_key] = arr
 
 
     # compute sensitivity on normalised uncertainty scores
@@ -323,11 +327,10 @@ def run_uncertainty_decomposition(
         # per-level AUROC: score = expected, label = 1 if expected dominates
         true_labels = (expected > other).astype(int)
         n_pos, n_neg = int(true_labels.sum()), int((true_labels == 0).sum())
-        if n_pos == 0 or n_neg == 0:
-            auroc = float("nan")
+        auroc = _finite_binary_auroc(true_labels, expected)
+        if np.isnan(auroc):
             print(f"  [{name}] AUROC=nan  ({n_pos} pos, {n_neg} neg)")
         else:
-            auroc = float(roc_auc_score(true_labels, expected))
             print(f"  [{name}] AUROC={auroc:.4f}  ({n_pos} pos / {n_neg} neg)")
         per_level_auroc.append(auroc)
         performance[f"auroc_{expected_uq_type}_{name}"] = auroc

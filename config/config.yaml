@@ -7,6 +7,7 @@ defaults:
   - _self_
 
 seed: 11111
+num_runs: 10   
 weighted: False
 
 setup_only: false

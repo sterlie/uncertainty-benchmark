@@ -374,10 +374,6 @@ class Swag(Method):
             "ambiguous": aleatoric_uncertainty,
         }
 
-    # ------------------------------------------------------------------ #
-    # New lifecycle hooks called by the experiment runner                  #
-    # ------------------------------------------------------------------ #
-
     def train_model(self, train_loader, val_loader, **kwargs):
         """SWAG trains the base model internally — no separate pre-train step."""
         self.train_loader = train_loader
