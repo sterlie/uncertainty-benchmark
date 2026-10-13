@@ -9,29 +9,29 @@ from src.methods.method import Method
 from src.methods.utils import multi_label_uncertainty, multi_class_uncertainty
 
 
-class RegressionDataset(torch.utils.data.Dataset):
-    """Maps binary multi-label targets to (+/-)scale for Laplace regression likelihood."""
-
-    def __init__(self, dataset, scale: float = 10.0):
-        self.dataset = dataset
-        self.scale = scale
-
-    def __len__(self):
-        return len(self.dataset)
-
-    def __getitem__(self, idx):
-        items = self.dataset[idx]
-        x, y = items[:2]
-        y = torch.where(
-            y >= 0.5,
-            self.scale * torch.ones_like(y, dtype=torch.float32),
-            -self.scale * torch.ones_like(y, dtype=torch.float32),
-        )
-        if len(items) > 3:
-            return x, y, items[2], items[3]
-        if len(items) > 2:
-            return x, y, items[2]
-        return x, y
+#class RegressionDataset(torch.utils.data.Dataset):
+#    """Maps binary multi-label targets to (+/-)scale for Laplace regression likelihood."""
+#
+#    def __init__(self, dataset, scale: float = 10.0):
+#        self.dataset = dataset
+#        self.scale = scale
+#
+#    def __len__(self):
+#        return len(self.dataset)
+#
+#    def __getitem__(self, idx):
+#        items = self.dataset[idx]
+#        x, y = items[:2]
+#        y = torch.where(
+#            y >= 0.5,
+#            self.scale * torch.ones_like(y, dtype=torch.float32),
+#            -self.scale * torch.ones_like(y, dtype=torch.float32),
+#        )
+#        if len(items) > 3:
+#            return x, y, items[2], items[3]
+#        if len(items) > 2:
+#            return x, y, items[2]
+#        return x, y
 
 @register_method("laplace_approximation")
 class LaplaceApproximation(Method):
@@ -136,9 +136,9 @@ class LaplaceApproximation(Method):
         val_dataset = val_loader.dataset
 
         self._init_laplace()
-        if self.laplace_likelihood == "regression":
-            train_dataset = RegressionDataset(train_dataset)
-            val_dataset = RegressionDataset(val_dataset)
+        #if self.laplace_likelihood == "regression":
+        #    train_dataset = RegressionDataset(train_dataset)
+        #    val_dataset = RegressionDataset(val_dataset)
 
         la_train_loader = DataLoader(
             Subset(train_dataset, range(train_size)),
@@ -164,17 +164,17 @@ class LaplaceApproximation(Method):
         labels = []
         for x_test, y_test in tqdm(loader):
             try:
-                if self.laplace_likelihood == "regression":
-                    pred = self.laplace.predictive_samples(
-                        x_test.to(self.device),
-                        n_samples=self._sample_size(),
-                    )
-                else:
-                    pred = self.laplace.predictive_samples(
-                        x_test.to(self.device),
-                        pred_type=self._prediction_type(),
-                        n_samples=self._sample_size(),
-                    )
+                #if self.laplace_likelihood == "regression":
+                #    pred = self.laplace.predictive_samples(
+                #        x_test.to(self.device),
+                #        n_samples=self._sample_size(),
+                #    )
+                #else:
+                pred = self.laplace.predictive_samples(
+                    x_test.to(self.device),
+                    pred_type=self._prediction_type(),
+                    n_samples=self._sample_size(),
+                )
                 predictions.append(pred.cpu())
                 labels.append(y_test)
             except Exception as e:
@@ -190,12 +190,12 @@ class LaplaceApproximation(Method):
         ground_truth = ground_truth.to(self.device)
 
         if self.is_multilabel:
-            if self.laplace_likelihood == "regression":
-                mean_prediction = torch.sigmoid(predictions).mean(dim=0)
-                sigmoid = True
-            else:
-                mean_prediction = predictions.mean(dim=0)
-                sigmoid = False
+            #if self.laplace_likelihood == "regression":
+            #    mean_prediction = torch.sigmoid(predictions).mean(dim=0)
+            #    sigmoid = True
+            #else:
+            mean_prediction = predictions.mean(dim=0)
+            sigmoid = False
             total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty = multi_label_uncertainty(
                 predictions,
                 mean_prediction,
