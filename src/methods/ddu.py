@@ -117,27 +117,27 @@ def gmm_forward(method, net, gaussians_model, data_B_X):
     return logits_B_Z, log_probs_B_Y, features_B_Z
 
 
-def gmm_evaluate(net, gaussians_model, loader, device, num_classes, storage_device):
-    num_samples = len(loader.dataset)
-    logits_N_C = torch.empty((num_samples, num_classes), dtype=torch.float, device=storage_device)
-    labels_N = torch.empty(num_samples, dtype=torch.int, device=storage_device)
-
-    with torch.no_grad():
-        start = 0
-        for data, label in tqdm(loader):
-            data = data.to(device)
-            label = label.to(device)
-
-            label = label.squeeze(1).long() if label.ndim == 2 else label.long()
-
-            _, logit_B_C, _ = gmm_forward(net, gaussians_model, data)
-
-            end = start + len(data)
-            logits_N_C[start:end].copy_(logit_B_C, non_blocking=True)
-            labels_N[start:end].copy_(label, non_blocking=True)
-            start = end
-
-    return logits_N_C, labels_N
+#def gmm_evaluate(net, gaussians_model, loader, device, num_classes, storage_device):
+#    num_samples = len(loader.dataset)
+#    logits_N_C = torch.empty((num_samples, num_classes), dtype=torch.float, device=storage_device)
+#    labels_N = torch.empty(num_samples, dtype=torch.int, device=storage_device)
+#
+#    with torch.no_grad():
+#        start = 0
+#        for data, label in tqdm(loader):
+#            data = data.to(device)
+#            label = label.to(device)
+#
+#            label = label.squeeze(1).long() if label.ndim == 2 else label.long()
+#
+#            _, logit_B_C, _ = gmm_forward(net, gaussians_model, data)
+#
+#            end = start + len(data)
+#            logits_N_C[start:end].copy_(logit_B_C, non_blocking=True)
+#            labels_N[start:end].copy_(label, non_blocking=True)
+#            start = end
+#
+#    return logits_N_C, labels_N
 
 
 def gmm_get_logits(gmm, embeddings):
@@ -418,7 +418,10 @@ class DDU(Method):
         # epistemic uncertainty is the log marginal densities 
         # logsumexp of GDA class densities approximates log p(z): low density (OOD) -> high uncertainty
         log_density = logsumexp(logits_feat, multi_label=self.is_multilabel, reduction=reduction)
-        epistemic_uncertainty = -log_density
+        #epistemic_uncertainty = -log_density
+
+        # TEST see results when epistemic = entropy of features 
+        epistemic_uncertainty = entropy(logits_feat)
 
         if self.uncertainty_per_class and epistemic_uncertainty.shape[-1] > self.num_classes:
             # multi-label GMM has one extra shared "negative" component beyond num_classes
@@ -431,11 +434,8 @@ class DDU(Method):
         ood_score = total_uncertainty
         misclassify_score = total_uncertainty
         predictions = torch.sigmoid(logits) if self.is_multilabel else F.softmax(logits, dim=-1)
-
-        # aleatoric is only defined in-distribution (predict only "if not is_ood"); NaN for OOD samples
-        aleatoric_uncertainty = torch.where(is_ood, torch.full_like(aleatoric_uncertainty, float("nan")), aleatoric_uncertainty)
+        
         ambiguous_score = aleatoric_uncertainty
-
         zero_uncertainty = torch.zeros_like(total_uncertainty)
 
 

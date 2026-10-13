@@ -54,7 +54,7 @@ def multi_class_uncertainty(predictions, mean_prediction, eps=1e-8):
         F.kl_div(mean_pred_batch.log(), predictions, reduction="none").sum(dim=2).mean(dim=0) +
         F.kl_div(predictions.log(), mean_pred_batch, reduction="none").sum(dim=2).mean(dim=0))
     # print(epistemic_uncertainty.mean(), epistemic_uncertainty_kl.mean(), epistemic_uncertainty.mean() / epistemic_uncertainty_kl.mean())
-    epistemic_uncertainty = epistemic_uncertainty_kl
+    #epistemic_uncertainty = epistemic_uncertainty_kl
 
     return total_uncertainty, aleatoric_uncertainty, epistemic_uncertainty
 

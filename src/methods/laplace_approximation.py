@@ -45,40 +45,27 @@ class LaplaceApproximation(Method):
         self.ood_threshold = config.method.get('ood_threshold', 0.0)
         self.misclassify_threshold = config.method.get('misclassify_threshold', self.ood_threshold)
 
-    def _prediction_type(self):
-        return self.config.method.get('pred_type', self.config.method.get('prediction_type', 'glm'))
+    #def _prediction_type(self):
+    #    return self.config.method.get('pred_type', self.config.method.get('prediction_type', 'glm'))
 
-    def _link_approximation(self):
-        return self.config.method.get('link_approx', self.config.method.get('link_approximation', 'mc'))
+    #def _link_approximation(self):
+    #    return self.config.method.get('link_approx', self.config.method.get('link_approximation', 'mc'))
 
-    def _sample_size(self):
-        return int(self.config.method.get('num_samples', self.config.method.get('sample_size', 100)))
+    #def _sample_size(self):
+    #    return int(self.config.method.get('num_samples', self.config.method.get('sample_size', 100)))
 
     def _likelihood(self):
         return "binary" if self.is_multilabel else "classification"
 
     def _init_laplace(self, likelihood: str | None = None):
-        requested_likelihood = likelihood or self._likelihood()
-        try:
-            self.laplace = Laplace(
-                self.model,
-                requested_likelihood,
-                self.config.method.subset_of_weights,
-                self.config.method.hessian_structure,
-            )
-            self.laplace_likelihood = requested_likelihood
-            return self.laplace
-        except ValueError as error:
-            if self.is_multilabel and requested_likelihood == "binary" and "Invalid likelihood type binary" in str(error):
-                self.laplace = Laplace(
-                    self.model,
-                    "regression",
-                    self.config.method.subset_of_weights,
-                    self.config.method.hessian_structure,
-                )
-                self.laplace_likelihood = "regression"
-                return self.laplace
-            raise
+        self.laplace_likelihood = likelihood or self._likelihood()
+        self.laplace = Laplace(
+            self.model,
+            self.laplace_likelihood,
+            self.config.method.subset_of_weights,
+            self.config.method.hessian_structure,
+        )
+        return self.laplace
 
     def train_model(self, train_loader, val_loader, **kwargs):
         """Train the base model and then fit Laplace approximation."""
@@ -152,8 +139,8 @@ class LaplaceApproximation(Method):
         self.laplace.fit(la_train_loader)
         self.laplace.optimize_prior_precision(
             method=self.config.method.get('optimization_method', 'gridsearch'),
-            pred_type=self._prediction_type(),
-            link_approx=self._link_approximation(),
+            pred_type=self.config.method.get('pred_type', self.config.method.get('prediction_type', 'glm')),
+            link_approx=self.config.method.get('link_approx', self.config.method.get('link_approximation', 'mc')),
             val_loader=la_val_loader,
         )
 
@@ -172,8 +159,8 @@ class LaplaceApproximation(Method):
                 #else:
                 pred = self.laplace.predictive_samples(
                     x_test.to(self.device),
-                    pred_type=self._prediction_type(),
-                    n_samples=self._sample_size(),
+                    pred_type=self.config.method.get('pred_type', self.config.method.get('prediction_type', 'glm')),
+                    n_samples=int(self.config.method.get('num_samples', self.config.method.get('sample_size', 100))),
                 )
                 predictions.append(pred.cpu())
                 labels.append(y_test)
