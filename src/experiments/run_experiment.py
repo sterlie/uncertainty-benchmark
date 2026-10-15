@@ -348,7 +348,8 @@ def main(cfg: DictConfig) -> None:
     dataset_name = str(cfg.dataset.name)
     experiment_name = str(cfg.experiment.name)
     run_id = str(cfg.output.get("run_id", "run"))
-    project_root = Path(HydraConfig.get().runtime.cwd)
+    # All outputs (models/results/plots) live under output.root, not the repo
+    project_root = Path(str(cfg.output.root))
     # Date comes from Hydra's output dir (results/YYYY-MM-DD/experiment_name)
     run_date = Path(HydraConfig.get().runtime.output_dir).parent.name
     results_root = project_root / "results"
@@ -610,7 +611,7 @@ def main(cfg: DictConfig) -> None:
         plt.close(fig)
         print({"auroc_comparison": str(cmp_plot_dir)})
 
-    print({"status": "done", "methods": methods_to_run, "num_runs": num_runs, "levels": level_names, "output_dir": os.getcwd() + "/results"})
+    print({"status": "done", "methods": methods_to_run, "num_runs": num_runs, "levels": level_names, "output_dir": str(results_root)})
 
 
 if __name__ == "__main__":

@@ -85,7 +85,7 @@ def _build_blur_loaders(
                 test_subset_size,
             )
 
-        train_loaders[level_name] = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
+        train_loaders[level_name] = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=False)
         val_loaders[level_name] = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     return train_loaders, val_loaders, val_loaders, level_names
@@ -129,7 +129,7 @@ def _build_fracture_loaders(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        drop_last=True,
+        drop_last=False,
     )
     clean_val_loader = DataLoader(
         val_plain,
@@ -211,7 +211,7 @@ def _build_thinning_loaders(
         train_plain,
         batch_size=batch_size,
         shuffle=True,
-        drop_last=True)
+        drop_last=False)
     clean_val_loader = DataLoader(
         val_plain, 
         batch_size=batch_size, 

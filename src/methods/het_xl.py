@@ -183,7 +183,7 @@ class HetXL(Method):
         epochs = self.config.optimizer.get('epochs', 10)
         dataset_name = self.config.dataset.name
         model_name = self.config.model.name
-        _best_ckpt = Path(os.getcwd()) / "models" / dataset_name / "het_xl" / f"best_model_{model_name}.pt"
+        _best_ckpt = Path(str(self.config.output.root)) / "models" / dataset_name / "het_xl" / f"best_model_{model_name}.pt"
         _best_ckpt.parent.mkdir(parents=True, exist_ok=True)
         print("Any trainable params:",
               any(p.requires_grad for p in self.model.parameters()))

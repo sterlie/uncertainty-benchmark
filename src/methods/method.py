@@ -49,11 +49,14 @@ class Method(ABC):
         output_cfg = getattr(self.config, "output", None)
         if output_cfg is not None and "base_model_path" in output_cfg:
             return Path(str(output_cfg.base_model_path))
-        try:
-            from hydra.core.hydra_config import HydraConfig
-            project_root = Path(HydraConfig.get().runtime.cwd)
-        except Exception:
-            project_root = Path(os.getcwd())
+        if output_cfg is not None and "root" in output_cfg:
+            project_root = Path(str(output_cfg.root))
+        else:
+            try:
+                from hydra.core.hydra_config import HydraConfig
+                project_root = Path(HydraConfig.get().runtime.cwd)
+            except Exception:
+                project_root = Path(os.getcwd())
         dataset_name = str(getattr(getattr(self.config, "dataset", {}), "name", "default"))
         method_name = str(getattr(getattr(self.config, "method", {}), "name", "default"))
         return project_root / "models" / dataset_name / method_name

@@ -17,10 +17,12 @@ data:
   root: ${hydra:runtime.cwd}/data
 
 output:
+  # models/, results/, plots/ and Hydra logs are written under this dir
+  root: /work3/sarste/uncertainty-benchmark
   save_model: true
   save_metrics: true
   run_id: ${now:%Y-%m-%d_%H-%M-%S}
 
 hydra:
   run:
-    dir: ${hydra:runtime.cwd}/results/${now:%Y-%m-%d}/${experiment.name}
+    dir: ${output.root}/results/${now:%Y-%m-%d}/${experiment.name}
