@@ -423,7 +423,9 @@ class DDU(Method):
         # TEST see results when epistemic = entropy of features 
         epistemic_uncertainty = entropy(logits_feat)
 
-        if self.uncertainty_per_class and epistemic_uncertainty.shape[-1] > self.num_classes:
+        if self.uncertainty_per_class and epistemic_uncertainty.ndim == 1:
+            epistemic_uncertainty = epistemic_uncertainty.unsqueeze(1).repeat(1, self.num_classes)
+        elif self.uncertainty_per_class and epistemic_uncertainty.shape[-1] > self.num_classes:
             # multi-label GMM has one extra shared "negative" component beyond num_classes
             epistemic_uncertainty = epistemic_uncertainty[:, :self.num_classes]
         total_uncertainty = aleatoric_uncertainty + epistemic_uncertainty

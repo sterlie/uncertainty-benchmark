@@ -273,7 +273,7 @@ def _make_loader(
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
-        drop_last=False,
+        drop_last=shuffle and len(ds) % batch_size == 1,
     )
 
 
