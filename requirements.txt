@@ -1,7 +1,7 @@
 hydra-core==1.3.2
 ipython==8.12.3
 curvlinops-for-pytorch==2.0.1
-laplace-torch @ git+https://github.com/DangDinhQuocTrung/Laplace.git
+laplace-torch @ git+https://github.com/DangDinhQuocTrung/Laplace.git@feat/add_bce
 matplotlib==3.9.4
 mpmath==1.3.0
 multipledispatch==1.0.0
