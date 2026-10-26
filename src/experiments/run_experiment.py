@@ -16,6 +16,7 @@ from omegaconf import DictConfig, OmegaConf
 from hydra.core.hydra_config import HydraConfig
 from sklearn.metrics import roc_auc_score
 from torch.utils.data import ConcatDataset, DataLoader, Subset
+from torchmetrics.functional import auroc as torchmetrics_auroc
 
 from src.methods.method_factory import MethodFactory
 from src.experiments.datasets import get_dataset_adapter
@@ -75,8 +76,15 @@ def _plot_amb_distributions(
     plt.close(fig)
 
 
-def _eval_amb_detection(results: list, targets: torch.Tensor, performance: dict, prefix: str) -> dict:
-
+def _eval_amb_detection(
+    results: list,
+    targets: torch.Tensor,
+    performance: dict,
+    prefix: str,
+    multilabel: bool = False,
+) -> dict:
+    """Computes clear/ambiguous distribution stats and AUROC per uncertainty type.
+    """
     targets_np = targets.detach().cpu().numpy()
 
     for ut in ["total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty"]:
@@ -87,7 +95,20 @@ def _eval_amb_detection(results: list, targets: torch.Tensor, performance: dict,
         std_amb = float(np.std(scores[targets_np == 1]))
         performance[f"{prefix}_dist_{ut}"] = [m_clear, m_amb]
         performance[f"{prefix}_dist_{ut}_std"] = [std_clear, std_amb]
-        auroc = float(roc_auc_score(targets_np, scores)) if len(np.unique(targets_np)) > 1 else float("nan")
+
+        if multilabel and targets_np.ndim > 1:
+            num_labels = targets_np.shape[-1]
+            scores_t = torch.as_tensor(scores, dtype=torch.float32)
+            auroc_value = torchmetrics_auroc(
+                scores_t,
+                targets.long(),
+                task="multilabel",
+                num_labels=num_labels,
+                average="macro",
+            )
+            auroc = float(auroc_value)
+        else:
+            auroc = float(roc_auc_score(targets_np, scores)) if len(np.unique(targets_np)) > 1 else float("nan")
         performance[f"{prefix}_auroc_{ut}"] = auroc
 
         print(f"  {ut}: clear_mean={m_clear:.4f}  amb_mean={m_amb:.4f}  AUROC={auroc:.4f}")
@@ -144,10 +165,15 @@ def run_ambiguous_uncertainty_task(
     all_predictions = torch.cat([r["predictions"] for r in results], dim=0).to(device)
     all_targets = torch.cat([r["ground_truth"] for r in results], dim=0).to(device)
 
-    amb_targets = (all_targets == -1).any(dim=-1).long()
-    n_amb = int(amb_targets.sum().item())
-    n_clear = int((amb_targets == 0).sum().item())
+    # Mirrors `Metric.multi_label` in src/metrics/metric.py: per-class uncertainty
+    # scores require the per-class (not reduced) targets for a multilabel AUROC.
+    multilabel = bool(cfg.dataset.get("multilabel", False)) and (cfg.dataset.get("chosen_disease", None) is None)
+
+    amb_any = (all_targets == -1).any(dim=-1).long()
+    n_amb = int(amb_any.sum().item())
+    n_clear = int((amb_any == 0).sum().item())
     print(f"Ambiguous: {n_amb}  Clear: {n_clear}")
+    amb_targets = (all_targets == -1).long() if multilabel else amb_any
 
     if n_amb == 0:
         print(
@@ -165,12 +191,13 @@ def run_ambiguous_uncertainty_task(
             print(f"  {ut}: clear_mean=nan  amb_mean=nan  AUROC=nan  (no ambiguous samples)")
     else:
         _plot_amb_distributions(results, amb_targets, plot_dir, prefix="amb")
-        performance = _eval_amb_detection(results, amb_targets, performance, prefix="amb")
+        performance = _eval_amb_detection(results, amb_targets, performance, prefix="amb", multilabel=multilabel)
 
-    miscls_targets = ((all_predictions > 0.5) != (all_targets == 1)).any(dim=-1).long()
-    print(f"Misclassification: {int(miscls_targets.sum().item())} / {len(all_targets)}")
+    miscls_any = ((all_predictions > 0.5) != (all_targets == 1)).any(dim=-1).long()
+    print(f"Misclassification: {int(miscls_any.sum().item())} / {len(all_targets)}")
+    miscls_targets = ((all_predictions > 0.5) != (all_targets == 1)).long() if multilabel else miscls_any
     _plot_amb_distributions(results, miscls_targets.detach(), plot_dir, prefix="miscls")
-    performance = _eval_amb_detection(results, miscls_targets, performance, prefix="miscls")
+    performance = _eval_amb_detection(results, miscls_targets, performance, prefix="miscls", multilabel=multilabel)
 
     with open(result_dir / "amb_task_performance.json", "w") as f:
         json.dump(performance, f, indent=4)
