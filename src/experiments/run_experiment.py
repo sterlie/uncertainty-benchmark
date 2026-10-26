@@ -14,13 +14,12 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 from hydra.core.hydra_config import HydraConfig
-from sklearn.metrics import roc_auc_score
 from torch.utils.data import ConcatDataset, DataLoader, Subset
-from torchmetrics.functional import auroc as torchmetrics_auroc
 
 from src.methods.method_factory import MethodFactory
 from src.experiments.datasets import get_dataset_adapter
 from src.experiments.tasks import run_ood_subgroup_task, run_uncertainty_decomposition
+from src.metrics import AUROC
 
 from src.utils.visualization import trend, entropy
 
@@ -77,13 +76,26 @@ def _plot_amb_distributions(
 
 
 def _eval_amb_detection(
+    cfg,
     results: list,
     targets: torch.Tensor,
     performance: dict,
     prefix: str,
-    multilabel: bool = False,
+    metric_task: str,
+    auroc_uncertainty_key: str,
 ) -> dict:
-    """Computes clear/ambiguous distribution stats and AUROC per uncertainty type.
+    """Computes clear/ambiguous distribution stats for every uncertainty type, plus
+    a single AUROC for the task's designated uncertainty type.
+
+    AUROC is computed via the shared `AUROC` metric class (src/metrics/metric.py),
+    matching `run_misclassification_detection_task`'s single
+    `AUROC(config, task).evaluate(outputs, targets)` call in the reference
+    implementation (.../RespUncible_AI/tasks/number_misclassify_task.py) — rather
+    than sklearn's `roc_auc_score`, which cannot accept per-class (multilabel)
+    scores for a binary target. `metric_task` only needs to be one of `Metric`'s
+    allowed task names ("ood" for ambiguity detection, "misclassify" for
+    misclassification detection); `AUROC.evaluate` does not use the task's
+    threshold, so the choice has no effect on the computed value.
     """
     targets_np = targets.detach().cpu().numpy()
 
@@ -95,23 +107,17 @@ def _eval_amb_detection(
         std_amb = float(np.std(scores[targets_np == 1]))
         performance[f"{prefix}_dist_{ut}"] = [m_clear, m_amb]
         performance[f"{prefix}_dist_{ut}_std"] = [std_clear, std_amb]
+        print(f"  {ut}: clear_mean={m_clear:.4f}  amb_mean={m_amb:.4f}")
 
-        if multilabel and targets_np.ndim > 1:
-            num_labels = targets_np.shape[-1]
-            scores_t = torch.as_tensor(scores, dtype=torch.float32)
-            auroc_value = torchmetrics_auroc(
-                scores_t,
-                targets.long(),
-                task="multilabel",
-                num_labels=num_labels,
-                average="macro",
-            )
-            auroc = float(auroc_value)
-        else:
-            auroc = float(roc_auc_score(targets_np, scores)) if len(np.unique(targets_np)) > 1 else float("nan")
-        performance[f"{prefix}_auroc_{ut}"] = auroc
-
-        print(f"  {ut}: clear_mean={m_clear:.4f}  amb_mean={m_amb:.4f}  AUROC={auroc:.4f}")
+    scores = _concat_uncertainty_key(results, auroc_uncertainty_key)
+    if len(np.unique(targets_np)) > 1:
+        scores_t = torch.as_tensor(scores, dtype=torch.float32)
+        auroc_metric = AUROC(cfg, metric_task, num_classes=2)
+        auroc = float(auroc_metric.evaluate(scores_t, targets.long()))
+    else:
+        auroc = float("nan")
+    performance[f"{prefix}_auroc_{auroc_uncertainty_key}"] = auroc
+    print(f"  AUROC ({auroc_uncertainty_key}): {auroc:.4f}")
     return performance
 
 
@@ -165,39 +171,42 @@ def run_ambiguous_uncertainty_task(
     all_predictions = torch.cat([r["predictions"] for r in results], dim=0).to(device)
     all_targets = torch.cat([r["ground_truth"] for r in results], dim=0).to(device)
 
-    # Mirrors `Metric.multi_label` in src/metrics/metric.py: per-class uncertainty
-    # scores require the per-class (not reduced) targets for a multilabel AUROC.
-    multilabel = bool(cfg.dataset.get("multilabel", False)) and (cfg.dataset.get("chosen_disease", None) is None)
+    per_class = bool(cfg.dataset.get("uncertainty_per_class", False))
 
     amb_any = (all_targets == -1).any(dim=-1).long()
     n_amb = int(amb_any.sum().item())
     n_clear = int((amb_any == 0).sum().item())
     print(f"Ambiguous: {n_amb}  Clear: {n_clear}")
-    amb_targets = (all_targets == -1).long() if multilabel else amb_any
+    amb_targets = (all_targets == -1).long() if per_class else amb_any
 
     if n_amb == 0:
         print(
             "WARNING: No ambiguous samples found (amb_targets all 0).  "
-            "This usually means the dataset CSV has no -1 (uncertain) labels — "
-            "e.g. CheXpert valid.csv uses only 0/1 labels.  "
-            "To run the ambiguity task, point 'dataset.metadata_csv' to a CSV "
-            "that contains -1 labels (e.g. the CheXpert train.csv).  "
-            "Ambiguity-task metrics will be NaN."
         )
         for ut in ["total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty"]:
             performance[f"amb_dist_{ut}"] = [float("nan"), float("nan")]
             performance[f"amb_dist_{ut}_std"] = [float("nan"), float("nan")]
-            performance[f"amb_auroc_{ut}"] = float("nan")
-            print(f"  {ut}: clear_mean=nan  amb_mean=nan  AUROC=nan  (no ambiguous samples)")
+            print(f"  {ut}: clear_mean=nan  amb_mean=nan  (no ambiguous samples)")
+        performance["amb_auroc_aleatoric_uncertainty"] = float("nan")
+        print("  AUROC (aleatoric_uncertainty): nan  (no ambiguous samples)")
     else:
         _plot_amb_distributions(results, amb_targets, plot_dir, prefix="amb")
-        performance = _eval_amb_detection(results, amb_targets, performance, prefix="amb", multilabel=multilabel)
+        # Ambiguity detection AUROC is evaluated on aleatoric uncertainty
+        performance = _eval_amb_detection(
+            cfg, results, amb_targets, performance, prefix="amb",
+            metric_task="ood", auroc_uncertainty_key="aleatoric_uncertainty",
+        )
 
     miscls_any = ((all_predictions > 0.5) != (all_targets == 1)).any(dim=-1).long()
     print(f"Misclassification: {int(miscls_any.sum().item())} / {len(all_targets)}")
-    miscls_targets = ((all_predictions > 0.5) != (all_targets == 1)).long() if multilabel else miscls_any
+    miscls_targets = ((all_predictions > 0.5) != (all_targets == 1)).long() if per_class else miscls_any
     _plot_amb_distributions(results, miscls_targets.detach(), plot_dir, prefix="miscls")
-    performance = _eval_amb_detection(results, miscls_targets, performance, prefix="miscls", multilabel=multilabel)
+
+    # Misclassification detection AUROC is evaluated on total uncertainty
+    performance = _eval_amb_detection(
+        cfg, results, miscls_targets, performance, prefix="miscls",
+        metric_task="misclassify", auroc_uncertainty_key="total_uncertainty",
+    )
 
     with open(result_dir / "amb_task_performance.json", "w") as f:
         json.dump(performance, f, indent=4)

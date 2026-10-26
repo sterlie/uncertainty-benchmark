@@ -18,6 +18,7 @@ from sklearn.metrics import roc_auc_score
 from torch.utils.data import DataLoader
 
 from src.utils.visualization import plot_uncertainty_line_plot, roc_simple
+from src.metrics import AUROC
 
 # ── Shared constants ──────────────────────────────────────────────────────
 
@@ -210,27 +211,40 @@ def run_ood_subgroup_task(
     plt.close(line_fig)
 
     # ── 8. Misclassification detection (ID group only) ─────────────────
-    u_id = group_uncertainties[id_name]
-    preds_id = u_id["predictions"]
-    gt_id = u_id["ground_truth"]
-    if isinstance(preds_id, torch.Tensor):
-        preds_id = preds_id.detach().cpu().numpy()
+    uncertainty_id = group_uncertainties[id_name]
+    predictions_id = uncertainty_id["predictions"]
+    gt_id = uncertainty_id["ground_truth"]
+
+    if isinstance(predictions_id, torch.Tensor):
+        predictions_id = predictions_id.detach().cpu().numpy()
+
     if isinstance(gt_id, torch.Tensor):
         gt_id = gt_id.detach().cpu().numpy()
-    if gt_id is not None and preds_id is not None:
-        if preds_id.ndim == 2 and gt_id.ndim == 2:
+
+    if gt_id is not None and predictions_id is not None:
+        per_class = bool(cfg.dataset.get("uncertainty_per_class", False))
+        if predictions_id.ndim == 2 and gt_id.ndim == 2:
             # multilabel
-            miscls = ((preds_id > 0.5) != gt_id.astype(bool)).any(axis=-1)
-        elif preds_id.ndim == 2 and gt_id.ndim == 1:
+            miscls = (predictions_id > 0.5) != gt_id.astype(bool)
+            if not per_class:
+                miscls = miscls.any(axis=-1)
+        elif predictions_id.ndim == 2 and gt_id.ndim == 1:
             # single-label multiclass: compare predicted class index with gt
-            miscls = (preds_id.argmax(axis=-1) != gt_id)
+            miscls = (predictions_id.argmax(axis=-1) != gt_id)
         else:
-            miscls = ((preds_id > 0.5) != gt_id.astype(bool))
+            miscls = (predictions_id > 0.5) != gt_id.astype(bool)
         miscls = miscls.astype(int)
-        for ut in _OOD_UNCERTAINTY_KEYS:
-            auroc = _finite_binary_auroc(miscls, id_arrays[ut])
-            performance[f"miscls_auroc_{ut}"] = auroc
-            print(f"  Misclassification AUROC ({ut}): {auroc:.4f}")
+
+        total_uncertainty = uncertainty_id["total_uncertainty"]
+        if not isinstance(total_uncertainty, torch.Tensor):
+            total_uncertainty = torch.as_tensor(total_uncertainty)
+        if len(np.unique(miscls)) > 1:
+            auroc_metric = AUROC(cfg, "misclassify", num_classes=2)
+            auroc = float(auroc_metric.evaluate(total_uncertainty.float(), torch.as_tensor(miscls).long()))
+        else:
+            auroc = float("nan")
+        performance["miscls_auroc_total_uncertainty"] = auroc
+        print(f"  Misclassification AUROC (total_uncertainty): {auroc:.4f}")
 
     with open(result_dir / "ood_subgroup_performance.json", "w") as f:
         json.dump(performance, f, indent=4)
