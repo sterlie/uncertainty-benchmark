@@ -34,13 +34,19 @@ def _concat_uncertainty_key(results: list, key: str) -> np.ndarray:
 
 def _plot_amb_distributions(
     results: list,
-    targets_np,
+    targets_2d: torch.Tensor,
+    targets_1d: torch.Tensor,
     plot_dir: Path,
     prefix: str,
 ):
-    
-    targets_np = targets_np.detach().cpu().numpy()
+    """Plots histograms of each uncertainty type, split by the binary target.
 
+    Per-class uncertainty support is method-dependent (e.g. TTA always collapses
+    per-class scores to a scalar per sample, regardless of
+    `cfg.dataset.uncertainty_per_class`), so for each uncertainty type the target
+    actually used (`targets_2d` vs `targets_1d`) follows that type's own score
+    shape rather than a single assumption for the whole task.
+    """
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
     for idx, ut in enumerate([
@@ -49,6 +55,8 @@ def _plot_amb_distributions(
         "epistemic_uncertainty",
     ]):
         scores = _concat_uncertainty_key(results, ut)
+        targets = targets_2d if scores.ndim > 1 else targets_1d
+        targets_np = targets.detach().cpu().numpy()
 
         axes[idx].hist(
             scores[targets_np == 0],
@@ -78,7 +86,8 @@ def _plot_amb_distributions(
 def _eval_amb_detection(
     cfg,
     results: list,
-    targets: torch.Tensor,
+    targets_2d: torch.Tensor,
+    targets_1d: torch.Tensor,
     performance: dict,
     prefix: str,
     metric_task: str,
@@ -87,20 +96,10 @@ def _eval_amb_detection(
     """Computes clear/ambiguous distribution stats for every uncertainty type, plus
     a single AUROC for the task's designated uncertainty type.
 
-    AUROC is computed via the shared `AUROC` metric class (src/metrics/metric.py),
-    matching `run_misclassification_detection_task`'s single
-    `AUROC(config, task).evaluate(outputs, targets)` call in the reference
-    implementation (.../RespUncible_AI/tasks/number_misclassify_task.py) — rather
-    than sklearn's `roc_auc_score`, which cannot accept per-class (multilabel)
-    scores for a binary target. `metric_task` only needs to be one of `Metric`'s
-    allowed task names ("ood" for ambiguity detection, "misclassify" for
-    misclassification detection); `AUROC.evaluate` does not use the task's
-    threshold, so the choice has no effect on the computed value.
     """
-    targets_np = targets.detach().cpu().numpy()
-
     for ut in ["total_uncertainty", "aleatoric_uncertainty", "epistemic_uncertainty"]:
         scores = _concat_uncertainty_key(results, ut)
+        targets_np = (targets_2d if scores.ndim > 1 else targets_1d).detach().cpu().numpy()
         m_clear = float(np.mean(scores[targets_np == 0]))
         m_amb = float(np.mean(scores[targets_np == 1]))
         std_clear = float(np.std(scores[targets_np == 0]))
@@ -110,6 +109,8 @@ def _eval_amb_detection(
         print(f"  {ut}: clear_mean={m_clear:.4f}  amb_mean={m_amb:.4f}")
 
     scores = _concat_uncertainty_key(results, auroc_uncertainty_key)
+    targets = targets_2d if scores.ndim > 1 else targets_1d
+    targets_np = targets.detach().cpu().numpy()
     if len(np.unique(targets_np)) > 1:
         scores_t = torch.as_tensor(scores, dtype=torch.float32)
         auroc_metric = AUROC(cfg, metric_task, num_classes=2)
@@ -171,13 +172,11 @@ def run_ambiguous_uncertainty_task(
     all_predictions = torch.cat([r["predictions"] for r in results], dim=0).to(device)
     all_targets = torch.cat([r["ground_truth"] for r in results], dim=0).to(device)
 
-    per_class = bool(cfg.dataset.get("uncertainty_per_class", False))
-
-    amb_any = (all_targets == -1).any(dim=-1).long()
+    amb_2d = (all_targets == -1).long()
+    amb_any = amb_2d.any(dim=-1).long()
     n_amb = int(amb_any.sum().item())
     n_clear = int((amb_any == 0).sum().item())
     print(f"Ambiguous: {n_amb}  Clear: {n_clear}")
-    amb_targets = (all_targets == -1).long() if per_class else amb_any
 
     if n_amb == 0:
         print(
@@ -190,21 +189,21 @@ def run_ambiguous_uncertainty_task(
         performance["amb_auroc_aleatoric_uncertainty"] = float("nan")
         print("  AUROC (aleatoric_uncertainty): nan  (no ambiguous samples)")
     else:
-        _plot_amb_distributions(results, amb_targets, plot_dir, prefix="amb")
+        _plot_amb_distributions(results, amb_2d, amb_any, plot_dir, prefix="amb")
         # Ambiguity detection AUROC is evaluated on aleatoric uncertainty
         performance = _eval_amb_detection(
-            cfg, results, amb_targets, performance, prefix="amb",
+            cfg, results, amb_2d, amb_any, performance, prefix="amb",
             metric_task="ood", auroc_uncertainty_key="aleatoric_uncertainty",
         )
 
-    miscls_any = ((all_predictions > 0.5) != (all_targets == 1)).any(dim=-1).long()
+    miscls_2d = ((all_predictions > 0.5) != (all_targets == 1)).long()
+    miscls_any = miscls_2d.any(dim=-1).long()
     print(f"Misclassification: {int(miscls_any.sum().item())} / {len(all_targets)}")
-    miscls_targets = ((all_predictions > 0.5) != (all_targets == 1)).long() if per_class else miscls_any
-    _plot_amb_distributions(results, miscls_targets.detach(), plot_dir, prefix="miscls")
+    _plot_amb_distributions(results, miscls_2d, miscls_any, plot_dir, prefix="miscls")
 
     # Misclassification detection AUROC is evaluated on total uncertainty
     performance = _eval_amb_detection(
-        cfg, results, miscls_targets, performance, prefix="miscls",
+        cfg, results, miscls_2d, miscls_any, performance, prefix="miscls",
         metric_task="misclassify", auroc_uncertainty_key="total_uncertainty",
     )
 

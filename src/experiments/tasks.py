@@ -222,11 +222,18 @@ def run_ood_subgroup_task(
         gt_id = gt_id.detach().cpu().numpy()
 
     if gt_id is not None and predictions_id is not None:
-        per_class = bool(cfg.dataset.get("uncertainty_per_class", False))
+        total_uncertainty = uncertainty_id["total_uncertainty"]
+        if not isinstance(total_uncertainty, torch.Tensor):
+            total_uncertainty = torch.as_tensor(total_uncertainty)
+
+        # Per-class uncertainty support is method-dependent (e.g. TTA always
+        # collapses per-class scores to a scalar per sample, regardless of
+        # `cfg.dataset.uncertainty_per_class`), so whether `miscls` stays per-class
+        # or gets reduced follows `total_uncertainty`'s own shape.
         if predictions_id.ndim == 2 and gt_id.ndim == 2:
             # multilabel
             miscls = (predictions_id > 0.5) != gt_id.astype(bool)
-            if not per_class:
+            if total_uncertainty.ndim == 1:
                 miscls = miscls.any(axis=-1)
         elif predictions_id.ndim == 2 and gt_id.ndim == 1:
             # single-label multiclass: compare predicted class index with gt
@@ -235,9 +242,6 @@ def run_ood_subgroup_task(
             miscls = (predictions_id > 0.5) != gt_id.astype(bool)
         miscls = miscls.astype(int)
 
-        total_uncertainty = uncertainty_id["total_uncertainty"]
-        if not isinstance(total_uncertainty, torch.Tensor):
-            total_uncertainty = torch.as_tensor(total_uncertainty)
         if len(np.unique(miscls)) > 1:
             auroc_metric = AUROC(cfg, "misclassify", num_classes=2)
             auroc = float(auroc_metric.evaluate(total_uncertainty.float(), torch.as_tensor(miscls).long()))

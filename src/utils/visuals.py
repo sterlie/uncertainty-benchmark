@@ -41,8 +41,9 @@ ORDERS = {
     'isic_ink':         ['level_1', 'level_2', 'level_3', 'level_4'],
 
     # MNIST 
-    'mnist_blur':       ['low_severity', 'mid_severity', 'high_severity'],
-    'mnist_fracture':   ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
+    'mnist_blur':       ['plain','low_severity', 'mid_severity', 'high_severity'],
+    #'mnist_fracture':   ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
+    'mnist_fracture':   ['1', '3', '5', '10'],
     'mnist_thinning':   ['0.1', '0.3', '0.5', '0.7', '0.9'],
 
     # NIH
@@ -197,6 +198,20 @@ def _ood_mean_sd(rd, method, level, u_type):
     return _mean_sd(_ood_run_means(rd, method, level, u_type))
 
 
+def _ood_samples(rd, method, level, u_type):
+    """Per-sample uncertainty for one method/level, pooled (concatenated) over all runs."""
+    method_path = _method_dir(rd, method)
+    if method_path is None:
+        return np.array([])
+    chunks = []
+    for run_dir in _run_dirs(method_path):
+        p = _level_pkl_path(run_dir, level)
+        arr = _extract_uncertainty_array(load_pkl(p), method, u_type) if p is not None else None
+        if arr is not None:
+            chunks.append(arr[np.isfinite(arr)])
+    return np.concatenate(chunks) if chunks else np.array([])
+
+
 def _finite_auroc(labels, scores):
     """AUROC over samples with a finite score (DDU aleatoric is NaN for samples it flags as OOD)."""
     labels, scores = np.asarray(labels), np.asarray(scores, dtype=float)
@@ -230,7 +245,11 @@ def _isic_distribution_counts(experiment):
 
 # ── Plot 1: Per-method OOD uncertainty grid (2 × 4) ──────────────────────────
 def plot_method_grid(experiment, u_types=None, save=True):
-    """2×4 grid of per-method OOD uncertainty line plots. Overlays all u_types on each panel."""
+    """2×4 grid of per-method OOD uncertainty line plots. Overlays all u_types on each panel.
+
+    Samples from all runs are pooled per level; the line is the mean and the band is
+    seaborn's default 95% bootstrap CI of that mean.
+    """
     if u_types is None:
         u_types = ['total_uncertainty','aleatoric_uncertainty', 'epistemic_uncertainty', ]
     if experiment not in results:
@@ -245,14 +264,25 @@ def plot_method_grid(experiment, u_types=None, save=True):
 
     for i, method in enumerate(available[:8]):
         ax = axes[i // 4, i % 4]
+        frames = []
         for u_type in u_types:
             if method == 'entropy' and u_type != 'total_uncertainty':
                 continue
             if method not in methods.get(u_type, methods['total_uncertainty']):
                 continue
-            clr = U_COLORS.get(u_type, 'steelblue')
-            ys, sds = zip(*(_ood_mean_sd(rd, method, lv, u_type) for lv in order))
-            _plot_band(ax, order, ys, sds, color=clr, linewidth=1.5, label=u_type.replace('_', ' '))
+            for lv in order:
+                scores = _ood_samples(rd, method, lv, u_type)
+                frames.append(pd.DataFrame({
+                    'level': lv,
+                    'uncertainty': u_type.replace('_', ' '),
+                    'Uncertainty Score': scores.astype(float),
+                }))
+        if frames:
+            res = pd.concat(frames, ignore_index=True)
+            res['level'] = pd.Categorical(res['level'], categories=order, ordered=True)
+            palette = {u.replace('_', ' '): U_COLORS.get(u, 'steelblue') for u in u_types}
+            sns.lineplot(x='level', y='Uncertainty Score', hue='uncertainty', data=res,
+                         palette=palette, linewidth=1.5, ax=ax, legend=(i == 0))
         ax.set_title(legend_map.get(method, method), fontsize=9)
         ax.set_xlabel(xlabel, fontsize=8)
         ax.set_ylabel('Uncertainty Score', fontsize=8)
@@ -941,4 +971,43 @@ def chest_bin_plot(experiment, data_root=None, save=True):
     plt.tight_layout()
     if save:
         _save(fig, f'chest_bin_{experiment}.pdf')
+    plt.show()
+
+
+def plot_auroc_line(experiment, u_type='total_uncertainty', save=True):
+    """OOD-detection AUROC vs. distortion level for one experiment, one line per method."""
+    if experiment not in results:
+        print(f'{experiment} not available'); return
+    rd = results[experiment]
+    if _is_per_level_layout(rd):
+        print(f'{experiment} was run with one model per level (no shared ID set) — OOD AUROC is not defined.')
+        return
+    order = ORDERS[experiment]
+
+    fig, ax = plt.subplots(figsize=(max(8, len(order) * 0.7), 6))
+    for method in methods.get(u_type, methods['total_uncertainty']):
+        mdir = _method_dir(rd, method)
+        if mdir is None:
+            continue
+        run_aurocs = []
+        for run_dir in _run_dirs(mdir):
+            id_uncertainty = _to_np(load_pkl(run_dir / 'valid_uncertainties.pkl')[u_type])
+            aurocs = []
+            for level in order:
+                uncertainty = _to_np(load_pkl(run_dir / f'ood_uncertainty_{level}.pkl')[u_type])
+                true_labels = np.concatenate([np.zeros_like(id_uncertainty), np.ones_like(uncertainty)])
+                uncertainty_scores = np.concatenate([id_uncertainty, uncertainty])  # higher = more OOD-like
+                aurocs.append(roc_auc_score(true_labels, uncertainty_scores))
+            run_aurocs.append(aurocs)
+        mean, sd = _mean_sd(run_aurocs)
+        label = legend_map.get(method, method)
+        _plot_band(ax, order, mean, sd, color=palette_dict.get(label), label=label)
+    ax.set_title(experiment)
+    ax.set_xlabel(XLABELS[experiment])
+    ax.set_ylabel('AUROC')
+    ax.tick_params(axis='x', rotation=45)
+    ax.legend(loc='upper left', fontsize=6)
+    plt.tight_layout()
+    if save:
+        _save(fig, f'auroc_line_{experiment}_{u_type}.pdf')
     plt.show()
