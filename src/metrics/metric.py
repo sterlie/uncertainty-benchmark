@@ -151,6 +151,8 @@ class AUROC(Metric):
         super(AUROC, self).evaluate(outputs, targets)
         if targets.shape[0] == 0:
             return torch.tensor(0.0)
+        if self.num_classes <= 2 and outputs.shape == targets.shape:
+            return auroc(outputs, targets.long(), task="binary", num_classes=1, average="macro")
         predictions = self.check_outputs(outputs) if self.task != "classification" else outputs
         if self.num_classes <= 2:
             if (not self.reduction) and (targets.ndim > 1):
@@ -158,7 +160,6 @@ class AUROC(Metric):
             else:
                 auroc_result = auroc(predictions[:, 1] if predictions.ndim == 2 else predictions, targets.long(), task="binary", num_classes=1, average="macro")
         else:
-            # targets = torch.nn.functional.one_hot(targets.long(), num_classes=self.num_classes) if targets.ndim == 1 and predictions.ndim > 1 else targets.long()
             if self.multi_label:
                 auroc_result = auroc(predictions, targets.long(), task="multilabel", num_labels=self.num_classes, average="macro")
             else:
