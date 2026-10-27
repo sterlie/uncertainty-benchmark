@@ -13,9 +13,11 @@ from src.datasets.isic import (
     DEFAULT_ALL_CLASSES,
     DEFAULT_SELECTED_CLASSES,
     SkinISICDataset,
+    build_isic_pc1_splits,
     build_isic_subgroup_slices,
     build_isic_train_transform,
     build_isic_val_transform,
+    compute_isic_pc1,
     prepare_isic_table,
 )
 from src.experiments.datasets.base import DatasetExperimentAdapter, LoaderBundle, subset_df
@@ -118,8 +120,35 @@ def _split_kfold(cfg: DictConfig, df: pd.DataFrame):
     return train_df, val_df, test_df
 
 
+def build_isic_pc1_loaders(cfg: DictConfig, merged: pd.DataFrame) -> LoaderBundle:
+    """Train on the images closest to the PC1 line, evaluate on one test set per PC1 bin."""
+    pc1_cfg = cfg.dataset.get("pc1", {})
+    data_root = str(cfg.dataset.get("data_root", cfg.data.root))
+    pca_size = int(pc1_cfg.get("pca_image_size", 64))
+    cache_csv = pc1_cfg.get("cache_csv", os.path.join(data_root, f"pc1_scores_{pca_size}px.csv"))
+
+    merged = merged.join(compute_isic_pc1(merged, image_size=pca_size, cache_csv=cache_csv))
+    train_df, val_df, test_frames = build_isic_pc1_splits(
+        merged,
+        n_bins=int(pc1_cfg.get("n_bins", 4)),
+        max_dist=float(pc1_cfg.get("max_dist", 7.0)),
+        val_ratio=float(pc1_cfg.get("val_ratio", 0.1)),
+        test_per_bin=int(pc1_cfg.get("test_per_bin", 45)),
+        binning=str(pc1_cfg.get("binning", "uniform")),
+        seed=int(cfg.seed),
+    )
+
+    train_loader = _make_loader(train_df, cfg, shuffle=True, train=True)
+    val_loader = _make_loader(val_df, cfg, shuffle=False)
+    eval_loaders = {name: _make_loader(sub_df, cfg, shuffle=False) for name, sub_df in test_frames.items()}
+    return train_loader, val_loader, eval_loaders, list(eval_loaders.keys())
+
+
 def build_isic_loaders(cfg: DictConfig, distortion_pattern: str = "plain") -> LoaderBundle:
     merged = _read_merged_table(cfg)
+
+    if str(distortion_pattern) == "pc1":
+        return build_isic_pc1_loaders(cfg, merged)
 
     cv_enabled = bool(cfg.dataset.get("cv", {}).get("enabled", False))
     if cv_enabled:

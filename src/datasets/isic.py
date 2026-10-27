@@ -160,6 +160,91 @@ def build_isic_subgroup_slices(df: pd.DataFrame, subgroup: str) -> Dict[str, pd.
     )
 
 
+def compute_isic_pc1(df: pd.DataFrame, image_size: int = 64, cache_csv: str | None = None) -> pd.DataFrame:
+    """Project every image onto the first principal component of downscaled RGB pixels.
+
+    Images are resized to image_size x image_size, flattened and fed to a 1-component PCA
+    fitted on all rows of *df*. Returns columns 'pc1' (score along PC1) and 'pc1_dist'
+    (Euclidean distance from the image to the PC1 line, i.e. the reconstruction residual).
+    Results are cached per image_id in *cache_csv* when given.
+    """
+    from sklearn.decomposition import PCA
+
+    if cache_csv and os.path.exists(cache_csv):
+        cached = pd.read_csv(cache_csv, dtype={"image_id": str}).set_index("image_id")
+        if {"pc1", "pc1_dist"} <= set(cached.columns) and df["image_id"].isin(cached.index).all():
+            return cached.loc[df["image_id"], ["pc1", "pc1_dist"]].set_index(df.index).astype(float)
+
+    pixels = np.empty((len(df), image_size * image_size * 3), dtype=np.float32)
+    for i, path in enumerate(df["image_path"]):
+        img = Image.open(path)
+        img.draft("RGB", (image_size, image_size))  # fast JPEG downscale while decoding
+        img = img.convert("RGB").resize((image_size, image_size), Image.BILINEAR)
+        pixels[i] = np.asarray(img, dtype=np.float32).ravel() / 255.0
+
+    pca = PCA(n_components=1).fit(pixels)
+    pc1 = pca.transform(pixels)
+    dist = np.linalg.norm(pixels - pca.inverse_transform(pc1), axis=1)
+    out = pd.DataFrame({"pc1": pc1[:, 0], "pc1_dist": dist}, index=df.index)
+
+    if cache_csv:
+        os.makedirs(os.path.dirname(cache_csv) or ".", exist_ok=True)
+        out.assign(image_id=df["image_id"].values).to_csv(cache_csv, index=False)
+    return out
+
+
+def build_isic_pc1_splits(
+    df: pd.DataFrame,
+    n_bins: int = 4,
+    max_dist: float = 7.0,
+    val_ratio: float = 0.1,
+    test_per_bin: int = 45,
+    binning: str = "uniform",
+    seed: int = 0,
+):
+    """Train on the images closest to the PC1 line, test on PC1 bins.
+
+    *df* needs 'pc1' and 'pc1_dist' columns. Images with 'pc1_dist' <= *max_dist* form the
+    train+val pool (val is a random *val_ratio* of it), so the training
+    distribution along PC1 is whatever those images give, not balanced. The remaining images
+    are binned along PC1 and *test_per_bin* are drawn at random from each bin.
+
+    Returns (train_df, val_df, {"bin_1": test_df, ..., "bin_n": test_df}), bins ordered by PC1.
+    binning="uniform" gives equal-width bins over the PC1 range; "quantile" gives equally populated bins.
+    """
+    if binning == "quantile":
+        bins = pd.qcut(df["pc1"], q=n_bins, labels=False)
+    elif binning == "uniform":
+        bins = pd.cut(df["pc1"], bins=n_bins, labels=False)
+    else:
+        raise ValueError(f"Unknown pc1 binning '{binning}'. Expected 'quantile' or 'uniform'.")
+
+    df = df.assign(pc1_bin=bins.astype(int))
+    rng = np.random.default_rng(seed)
+
+    on_pc1 = df[df["pc1_dist"] <= float(max_dist)]
+    if on_pc1.empty:
+        raise ValueError(f"No images within distance {max_dist} of the PC1 line.")
+    pool = on_pc1.iloc[rng.permutation(len(on_pc1))]
+    n_val = int(round(len(pool) * float(val_ratio)))
+    val_df = pool.iloc[:n_val].reset_index(drop=True)
+    train_df = pool.iloc[n_val:].reset_index(drop=True)
+
+    rest = df.drop(index=on_pc1.index)
+    test_frames = {}
+    for b in range(n_bins):
+        bin_df = rest[rest["pc1_bin"] == b]
+        if len(bin_df) < test_per_bin:
+            raise ValueError(
+                f"PC1 bin {b + 1} has {len(bin_df)} images left after taking the training set "
+                f"but {test_per_bin} test images are needed."
+            )
+        idx = rng.permutation(len(bin_df))[:test_per_bin]
+        test_frames[f"bin_{b + 1}"] = bin_df.iloc[idx].reset_index(drop=True)
+
+    return train_df, val_df, test_frames
+
+
 class SkinISICDataset(torch.utils.data.Dataset):
     """Custom dataset for ISIC images."""
 

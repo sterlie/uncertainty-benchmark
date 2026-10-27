@@ -531,7 +531,7 @@ def main(cfg: DictConfig) -> None:
 
         # ── OOD subgroup evaluation ───────────────────────────────────
         _subgroup_patterns = {"by_age", "by_disease_count", "by_gender", 
-                              "age", "ink", "drop", "hair", "skin_tone"}
+                              "age", "ink", "drop", "hair", "skin_tone", "pc1"}
         if distortion_pattern in _subgroup_patterns:
             run_ood_subgroup_task(
                 cfg=cfg,

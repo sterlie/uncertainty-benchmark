@@ -27,3 +27,13 @@ cv:
   n_splits: 5
   fold_index: 0
   seed: ${seed}
+
+# Used by the isic_pc1 experiment: PCA on downscaled images, bins along PC1.
+# Train/val = images within max_dist of the PC1 line; test = test_per_bin per bin from the rest.
+pc1:
+  n_bins: 4
+  max_dist: 7.0            # distance to PC1 line (64px RGB pixels in [0,1]); 7.0 -> ~950 images
+  val_ratio: 0.1
+  test_per_bin: 45
+  binning: uniform         # uniform (equal-width bins) or quantile (equally populated bins)
+  pca_image_size: 64
