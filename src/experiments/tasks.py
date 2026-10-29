@@ -225,8 +225,10 @@ def run_ood_subgroup_task(
         total_uncertainty = uncertainty_id["total_uncertainty"]
         if not isinstance(total_uncertainty, torch.Tensor):
             total_uncertainty = torch.as_tensor(total_uncertainty)
+        # miscls is built from numpy (CPU); keep scores on the same device for torchmetrics
+        total_uncertainty = total_uncertainty.detach().cpu()
 
-        # Per-class uncertainty support is method-dependent (e.g. TTA always
+        # Per-class uncertainty support is method-dependent (e.g. TTA always 
         # collapses per-class scores to a scalar per sample, regardless of
         # `cfg.dataset.uncertainty_per_class`), so whether `miscls` stays per-class
         # or gets reduced follows `total_uncertainty`'s own shape.
