@@ -95,7 +95,7 @@ def prepare_isic_table(
     merged["image_id"] = merged[image_id_col].astype(str)
 
 
-    # handled if images are svaed in a nested dir
+    # handle if images are saved in a nested dir
     if nested_image_folders:
         merged["image_path"] = merged.apply(
             lambda r: os.path.join(images_dir, str(r[lesion_id_col]), f"{r['image_id']}.jpg"),
@@ -108,7 +108,7 @@ def prepare_isic_table(
 
 
 def build_isic_subgroup_slices(df: pd.DataFrame, subgroup: str) -> Dict[str, pd.DataFrame]:
-    """Split an ISIC dataframe into subgroup-specific slices matching legacy thresholds."""
+    """Split an ISIC dataframe into subgroup-specific slices (moving ood)"""
     if subgroup == "age":
         col = "age_approx"
         return {

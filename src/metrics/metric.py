@@ -149,6 +149,8 @@ class AUROC(Metric):
 
     def evaluate(self, outputs: torch.Tensor, targets: torch.Tensor):
         super(AUROC, self).evaluate(outputs, targets)
+        # Scores often come from numpy (CPU) while targets may live on GPU; torchmetrics needs one device
+        outputs, targets = outputs.detach().cpu(), targets.detach().cpu()
         if targets.shape[0] == 0:
             return torch.tensor(0.0)
         if self.num_classes <= 2 and outputs.shape == targets.shape:
@@ -175,6 +177,7 @@ class AveragePrecision(Metric):
 
     def evaluate(self, outputs: torch.Tensor, targets: torch.Tensor):
         super(AveragePrecision, self).evaluate(outputs, targets)
+        outputs, targets = outputs.detach().cpu(), targets.detach().cpu()
         if targets.shape[0] == 0:
             return torch.tensor(0.0)
         predictions = self.check_outputs(outputs) if self.task != "classification" else outputs
