@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import Dict
 
@@ -13,7 +14,7 @@ from src.datasets.isic import (
     DEFAULT_ALL_CLASSES,
     DEFAULT_SELECTED_CLASSES,
     SkinISICDataset,
-    build_isic_pc1_splits,
+    build_isic_pc1_slices,
     build_isic_subgroup_slices,
     build_isic_train_transform,
     build_isic_val_transform,
@@ -120,35 +121,30 @@ def _split_kfold(cfg: DictConfig, df: pd.DataFrame):
     return train_df, val_df, test_df
 
 
-def build_isic_pc1_loaders(cfg: DictConfig, merged: pd.DataFrame) -> LoaderBundle:
-    """Train on the images closest to the PC1 line, evaluate on one test set per PC1 bin."""
+def build_isic_pc1_frames(cfg: DictConfig, train_df: pd.DataFrame, test_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    """Fit PC1 on the training images, project the test images and bin them along PC1."""
     pc1_cfg = cfg.dataset.get("pc1", {})
     data_root = str(cfg.dataset.get("data_root", cfg.data.root))
     pca_size = int(pc1_cfg.get("pca_image_size", 64))
-    cache_csv = pc1_cfg.get("cache_csv", os.path.join(data_root, f"pc1_scores_{pca_size}px.csv"))
+    # PCA depends on the training images, so key the cache on them
+    train_key = hashlib.md5(",".join(sorted(train_df["image_id"])).encode()).hexdigest()[:10]
+    cache_csv = os.path.join(data_root, f"pc1_scores_{pca_size}px_train{train_key}.csv")
 
-    merged = merged.join(compute_isic_pc1(merged, image_size=pca_size, cache_csv=cache_csv))
-    train_df, val_df, test_frames = build_isic_pc1_splits(
-        merged,
+    both = pd.concat([train_df, test_df], ignore_index=True)
+    fit_mask = np.arange(len(both)) < len(train_df)
+    scores = compute_isic_pc1(both, fit_mask=fit_mask, image_size=pca_size, cache_csv=cache_csv)
+    test_df = test_df.reset_index(drop=True).join(scores.iloc[len(train_df):].reset_index(drop=True))
+
+    return build_isic_pc1_slices(
+        test_df,
         n_bins=int(pc1_cfg.get("n_bins", 4)),
-        max_dist=float(pc1_cfg.get("max_dist", 7.0)),
-        val_ratio=float(pc1_cfg.get("val_ratio", 0.1)),
-        test_per_bin=int(pc1_cfg.get("test_per_bin", 45)),
+        bin_by=str(pc1_cfg.get("bin_by", "pc1")),
         binning=str(pc1_cfg.get("binning", "uniform")),
-        seed=int(cfg.seed),
     )
-
-    train_loader = _make_loader(train_df, cfg, shuffle=True, train=True)
-    val_loader = _make_loader(val_df, cfg, shuffle=False)
-    eval_loaders = {name: _make_loader(sub_df, cfg, shuffle=False) for name, sub_df in test_frames.items()}
-    return train_loader, val_loader, eval_loaders, list(eval_loaders.keys())
 
 
 def build_isic_loaders(cfg: DictConfig, distortion_pattern: str = "plain") -> LoaderBundle:
     merged = _read_merged_table(cfg)
-
-    if str(distortion_pattern) == "pc1":
-        return build_isic_pc1_loaders(cfg, merged)
 
     cv_enabled = bool(cfg.dataset.get("cv", {}).get("enabled", False))
     if cv_enabled:
@@ -162,8 +158,11 @@ def build_isic_loaders(cfg: DictConfig, distortion_pattern: str = "plain") -> Lo
     subgroup_patterns = {"age", "skin_tone", "hair", "drop", "ink"}
     pattern = str(distortion_pattern) if str(distortion_pattern) else "plain"
 
-    if pattern in subgroup_patterns:
-        subgroup_frames = build_isic_subgroup_slices(val_df, pattern)
+    if pattern in subgroup_patterns or pattern == "pc1":
+        if pattern == "pc1":
+            subgroup_frames = build_isic_pc1_frames(cfg, train_df, val_df)
+        else:
+            subgroup_frames = build_isic_subgroup_slices(val_df, pattern)
         eval_loaders = {
             name: _make_loader(sub_df, cfg, shuffle=False)
             for name, sub_df in subgroup_frames.items()

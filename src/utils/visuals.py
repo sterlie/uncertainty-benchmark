@@ -14,7 +14,11 @@ import torch
 from omegaconf import OmegaConf
 from sklearn.metrics import roc_auc_score
 
-from src.datasets.isic import build_isic_subgroup_slices
+from src.datasets.isic import (
+    build_isic_pc1_splits,
+    build_isic_subgroup_slices,
+    compute_isic_pc1,
+)
 from src.experiments.datasets.isic_adapter import _read_merged_table
 
 
@@ -40,6 +44,8 @@ ORDERS = {
     'isic_drop':        ['level_1', 'level_2', 'level_3'],
     'isic_ink':         ['level_1', 'level_2', 'level_3', 'level_4'],
 
+    'isic_pc1':         ['bin_1', 'bin_2', 'bin_3', 'bin_4'],
+
     # MNIST 
     'mnist_blur':       ['plain','low_severity', 'mid_severity', 'high_severity'],
     #'mnist_fracture':   ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
@@ -52,14 +58,17 @@ ORDERS = {
     'nih_gender':       ['Male', 'Female'],
 
     # CHEXPERT
-    #'chexpert_age':     ['age_0', 'age_10', 'age_20', 'age_30', 'age_40', 'age_50', 'age_60', 'age_70', 'age_80', 'age_90'],
-    'chexpert_age':     ['age_group_0', 'age_group_1', 'age_group_2'] ,
+    'chexpert_age':     ['age_20', 'age_30', 'age_40', 'age_50', 'age_60', 'age_70', 'age_80', 'age_90'],
+    #'chexpert_age':     ['age_group_0', 'age_group_1', 'age_group_2'] ,
     'chexpert_disease': [f'disease_{i}' for i in range(7)],
     'chexpert_gender':  ['Male', 'Female'],
 
 
     # VIN
     'vin_disease':      [f'disease_{i}' for i in range(7)],
+
+
+
 }
 NO_FINDINGS = {
     'isic' : 'isic_bin_plot(EXPERIMENT)',
@@ -73,6 +82,8 @@ XLABELS = {
     'isic_hair':      'Hair',
     'isic_drop':      'Level of dermoscopy liquid',
     'isic_ink':       'Ink level',
+
+    'isic_pc1':        'Bin number',
     
     # MNIST
     'mnist_blur':     'Level of blurring',
@@ -239,6 +250,26 @@ def _isic_distribution_counts(experiment):
     })
     OmegaConf.resolve(cfg)
     merged = _read_merged_table(cfg)
+    if subgroup == 'pc1':
+        pc1_cfg = dataset_cfg.get('pc1', {})
+        pca_size = int(pc1_cfg.get('pca_image_size', 64))
+        data_root = str(cfg.dataset.get('data_root', cfg.data.root))
+        cache_csv = pc1_cfg.get(
+            'cache_csv',
+            os.path.join(data_root, f'pc1_scores_{pca_size}px.csv'),
+        )
+        merged = merged.join(compute_isic_pc1(merged, image_size=pca_size, cache_csv=cache_csv))
+        _, _, test_frames = build_isic_pc1_splits(
+            merged,
+            n_bins=int(pc1_cfg.get('n_bins', 4)),
+            max_dist=float(pc1_cfg.get('max_dist', 7.0)),
+            val_ratio=float(pc1_cfg.get('val_ratio', 0.1)),
+            test_per_bin=int(pc1_cfg.get('test_per_bin', 45)),
+            binning=str(pc1_cfg.get('binning', 'uniform')),
+            seed=int(cfg.seed),
+        )
+        return [len(test_frames.get(level, [])) for level in ORDERS[experiment]]
+
     subgroup_frames = build_isic_subgroup_slices(merged, subgroup)
     return [len(subgroup_frames.get(level, [])) for level in ORDERS[experiment]]
 
@@ -336,7 +367,7 @@ def plot_distribution(experiment, save=True):
 
 
 # ── Plot 3: OOD-detection AUROC line plot ─────────────────────────────────────
-def plot_ood_auroc(experiment, u_type='total_uncertainty', save=True):
+def plot_ood_auroc(experiment, u_type='epistemic_uncertainty', save=True):
     """Per-method OOD-detection AUROC line plot across OOD levels.
 
     AUROC is computed per OOD level by concatenating ID uncertainty
@@ -974,7 +1005,7 @@ def chest_bin_plot(experiment, data_root=None, save=True):
     plt.show()
 
 
-def plot_auroc_line(experiment, u_type='total_uncertainty', save=True):
+def plot_auroc_line(experiment, u_type='epistemic_uncertainty', save=True):
     """OOD-detection AUROC vs. distortion level for one experiment, one line per method."""
     if experiment not in results:
         print(f'{experiment} not available'); return

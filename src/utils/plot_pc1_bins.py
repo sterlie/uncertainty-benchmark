@@ -1,8 +1,8 @@
-"""Bar plot of diagnosis counts per PC1 bin for the isic_pc1 task.
+"""Bar plot of diagnosis counts per PC1 bin of the test set for the isic_pc1 task.
 
 Usage (from repo root):
     python -m src.utils.plot_pc1_bins
-    python -m src.utils.plot_pc1_bins dataset.pc1.max_dist=8 seed=11112
+    python -m src.utils.plot_pc1_bins dataset.pc1.n_bins=6 dataset.pc1.bin_by=dist
 """
 
 import os
@@ -15,8 +15,12 @@ import numpy as np
 import pandas as pd
 from hydra import compose, initialize_config_dir
 
-from src.datasets.isic import build_isic_pc1_splits, compute_isic_pc1
-from src.experiments.datasets.isic_adapter import _read_merged_table
+from src.experiments.datasets.isic_adapter import (
+    _read_merged_table,
+    _split_kfold,
+    _split_single,
+    build_isic_pc1_frames,
+)
 
 # Fixed categorical order (reference data-viz palette, slots 1-6)
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]
@@ -37,36 +41,23 @@ def main(overrides):
         )
 
     pc1_cfg = cfg.dataset.pc1
-    pca_size = int(pc1_cfg.get("pca_image_size", 64))
-    data_root = str(cfg.dataset.data_root)
-    cache_csv = pc1_cfg.get("cache_csv", os.path.join(data_root, f"pc1_scores_{pca_size}px.csv"))
-
     df = _read_merged_table(cfg)
-    df = df.join(compute_isic_pc1(df, image_size=pca_size, cache_csv=cache_csv))
+    if bool(cfg.dataset.get("cv", {}).get("enabled", False)):
+        train_df, val_df, _ = _split_kfold(cfg, df)
+    else:
+        train_df, val_df, _ = _split_single(cfg, df)
+    # Same frames the experiment evaluates on (val_df is the binned test set)
+    test_frames = build_isic_pc1_frames(cfg, train_df, val_df)
+
     classes = [str(c) for c in cfg.dataset.selected_classes]
-    df["diagnosis"] = [classes[int(np.argmax(label))] for label in df["label"]]
+    n_bins = len(test_frames)
+    test_df = pd.concat(test_frames.values(), ignore_index=True)
+    test_df["diagnosis"] = [classes[int(np.argmax(label))] for label in test_df["label"]]
 
-    n_bins = int(pc1_cfg.n_bins)
-    train_df, val_df, test_frames = build_isic_pc1_splits(
-        df,
-        n_bins=n_bins,
-        max_dist=float(pc1_cfg.max_dist),
-        val_ratio=float(pc1_cfg.val_ratio),
-        test_per_bin=int(pc1_cfg.test_per_bin),
-        binning=str(pc1_cfg.binning),
-        seed=int(cfg.seed),
-    )
+    panels = {f"Test set (n={len(test_df)})": _counts_per_bin(test_df, classes, n_bins)}
 
-    panels = {
-        f"Training + validation (n={len(train_df) + len(val_df)})": _counts_per_bin(
-            pd.concat([train_df, val_df]), classes, n_bins
-        ),
-        f"Test (n={sum(len(d) for d in test_frames.values())})": _counts_per_bin(
-            pd.concat(test_frames.values()), classes, n_bins
-        ),
-    }
-
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    fig, axes = plt.subplots(1, len(panels), figsize=(6.5, 4.2), squeeze=False)
+    axes = axes[0]
     x = np.arange(n_bins)
     bin_labels = [f"bin_{b + 1}" for b in range(n_bins)]
     for ax, (title, counts) in zip(axes, panels.items()):
@@ -79,7 +70,7 @@ def main(overrides):
             ax.text(xi, total, f"{int(total)}", ha="center", va="bottom", fontsize=9, color="#52514e")
         ax.set_xticks(x)
         ax.set_xticklabels(bin_labels)
-        ax.set_xlabel("PC1 bin (dark → bright)")
+        ax.set_xlabel("PC1 bin" if pc1_cfg.bin_by == "pc1" else "Distance-to-PC1 bin (near → far)")
         ax.set_ylabel("Number of images")
         ax.set_title(title, fontsize=11)
         ax.set_ylim(0, bottom.max() * 1.1)
@@ -90,7 +81,7 @@ def main(overrides):
 
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, title="Diagnosis", loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False)
-    fig.suptitle(f"isic_pc1: diagnoses per PC1 bin (max_dist={pc1_cfg.max_dist}, seed={cfg.seed})")
+    fig.suptitle(f"isic_pc1: diagnoses per bin (bin_by={pc1_cfg.bin_by}, binning={pc1_cfg.binning})")
     fig.tight_layout()
 
     out_dir = os.path.join("src", "plots")

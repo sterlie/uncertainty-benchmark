@@ -160,13 +160,18 @@ def build_isic_subgroup_slices(df: pd.DataFrame, subgroup: str) -> Dict[str, pd.
     )
 
 
-def compute_isic_pc1(df: pd.DataFrame, image_size: int = 64, cache_csv: str | None = None) -> pd.DataFrame:
+def compute_isic_pc1(
+    df: pd.DataFrame,
+    fit_mask=None,
+    image_size: int = 64,
+    cache_csv: str | None = None,
+) -> pd.DataFrame:
     """Project every image onto the first principal component of downscaled RGB pixels.
 
-    Images are resized to image_size x image_size, flattened and fed to a 1-component PCA
-    fitted on all rows of *df*. Returns columns 'pc1' (score along PC1) and 'pc1_dist'
-    (Euclidean distance from the image to the PC1 line, i.e. the reconstruction residual).
-    Results are cached per image_id in *cache_csv* when given.
+    Images are resized to image_size x image_size and flattened. The 1-component PCA is fitted
+    on the rows where *fit_mask* is True (all rows when None) and every row is projected.
+    Returns columns 'pc1' (score along PC1) and 'pc1_dist' (Euclidean distance from the image
+    to the PC1 line, i.e. the reconstruction residual). Cached per image_id in *cache_csv*.
     """
     from sklearn.decomposition import PCA
 
@@ -182,7 +187,8 @@ def compute_isic_pc1(df: pd.DataFrame, image_size: int = 64, cache_csv: str | No
         img = img.convert("RGB").resize((image_size, image_size), Image.BILINEAR)
         pixels[i] = np.asarray(img, dtype=np.float32).ravel() / 255.0
 
-    pca = PCA(n_components=1).fit(pixels)
+    fit_mask = np.ones(len(df), dtype=bool) if fit_mask is None else np.asarray(fit_mask, dtype=bool)
+    pca = PCA(n_components=1).fit(pixels[fit_mask])
     pc1 = pca.transform(pixels)
     dist = np.linalg.norm(pixels - pca.inverse_transform(pc1), axis=1)
     out = pd.DataFrame({"pc1": pc1[:, 0], "pc1_dist": dist}, index=df.index)
@@ -193,56 +199,33 @@ def compute_isic_pc1(df: pd.DataFrame, image_size: int = 64, cache_csv: str | No
     return out
 
 
-def build_isic_pc1_splits(
+def build_isic_pc1_slices(
     df: pd.DataFrame,
     n_bins: int = 4,
-    max_dist: float = 7.0,
-    val_ratio: float = 0.1,
-    test_per_bin: int = 45,
+    bin_by: str = "pc1",
     binning: str = "uniform",
-    seed: int = 0,
-):
-    """Train on the images closest to the PC1 line, test on PC1 bins.
+) -> Dict[str, pd.DataFrame]:
+    """Split *df* into *n_bins* slices along its PC1 projection.
 
-    *df* needs 'pc1' and 'pc1_dist' columns. Images with 'pc1_dist' <= *max_dist* form the
-    train+val pool (val is a random *val_ratio* of it), so the training
-    distribution along PC1 is whatever those images give, not balanced. The remaining images
-    are binned along PC1 and *test_per_bin* are drawn at random from each bin.
-
-    Returns (train_df, val_df, {"bin_1": test_df, ..., "bin_n": test_df}), bins ordered by PC1.
-    binning="uniform" gives equal-width bins over the PC1 range; "quantile" gives equally populated bins.
+    bin_by="pc1" bins on the score along PC1 (position of the projection on the line);
+    bin_by="dist" bins on the Euclidean distance to the PC1 line ('pc1_dist').
+    binning="uniform" gives equal-width bins over the range of *df*; "quantile" gives
+    equally populated bins. Returns {"bin_1": ..., "bin_n": ...} ordered by increasing value.
     """
+    cols = {"pc1": "pc1", "dist": "pc1_dist"}
+    if bin_by not in cols:
+        raise ValueError(f"Unknown pc1 bin_by '{bin_by}'. Expected 'pc1' or 'dist'.")
+    values = df[cols[bin_by]]
+
     if binning == "quantile":
-        bins = pd.qcut(df["pc1"], q=n_bins, labels=False)
+        bins = pd.qcut(values, q=n_bins, labels=False)
     elif binning == "uniform":
-        bins = pd.cut(df["pc1"], bins=n_bins, labels=False)
+        bins = pd.cut(values, bins=n_bins, labels=False)
     else:
-        raise ValueError(f"Unknown pc1 binning '{binning}'. Expected 'quantile' or 'uniform'.")
+        raise ValueError(f"Unknown pc1 binning '{binning}'. Expected 'uniform' or 'quantile'.")
 
     df = df.assign(pc1_bin=bins.astype(int))
-    rng = np.random.default_rng(seed)
-
-    on_pc1 = df[df["pc1_dist"] <= float(max_dist)]
-    if on_pc1.empty:
-        raise ValueError(f"No images within distance {max_dist} of the PC1 line.")
-    pool = on_pc1.iloc[rng.permutation(len(on_pc1))]
-    n_val = int(round(len(pool) * float(val_ratio)))
-    val_df = pool.iloc[:n_val].reset_index(drop=True)
-    train_df = pool.iloc[n_val:].reset_index(drop=True)
-
-    rest = df.drop(index=on_pc1.index)
-    test_frames = {}
-    for b in range(n_bins):
-        bin_df = rest[rest["pc1_bin"] == b]
-        if len(bin_df) < test_per_bin:
-            raise ValueError(
-                f"PC1 bin {b + 1} has {len(bin_df)} images left after taking the training set "
-                f"but {test_per_bin} test images are needed."
-            )
-        idx = rng.permutation(len(bin_df))[:test_per_bin]
-        test_frames[f"bin_{b + 1}"] = bin_df.iloc[idx].reset_index(drop=True)
-
-    return train_df, val_df, test_frames
+    return {f"bin_{b + 1}": df[df["pc1_bin"] == b].reset_index(drop=True) for b in range(n_bins)}
 
 
 class SkinISICDataset(torch.utils.data.Dataset):

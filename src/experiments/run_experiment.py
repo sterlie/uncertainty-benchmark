@@ -459,6 +459,11 @@ def main(cfg: DictConfig) -> None:
         if model_path.exists():
             method.load_model(str(model_path), train_loader=base_train_loader, val_loader=base_val_loader)
             print({"method": method_name, "model": "loaded", "path": str(model_path)})
+        elif bool(cfg.experiment.get("load_pretrained_only", False)):
+            raise FileNotFoundError(
+                f"{experiment_name} only evaluates saved models, but none was found at {model_path}. "
+                f"Train it first with another {dataset_name} experiment (same split and model)."
+            )
         else:
             method.train_model(
                 base_train_loader,
