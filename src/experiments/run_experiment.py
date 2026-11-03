@@ -167,10 +167,9 @@ def run_ambiguous_uncertainty_task(
         with open(cache_path, "wb") as f:
             pickle.dump(results, f)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    all_predictions = torch.cat([r["predictions"] for r in results], dim=0).to(device)
-    all_targets = torch.cat([r["ground_truth"] for r in results], dim=0).to(device)
+    # Keep on CPU: uncertainty scores come from numpy, and torchmetrics needs one device
+    all_predictions = torch.cat([r["predictions"] for r in results], dim=0).detach().cpu()
+    all_targets = torch.cat([r["ground_truth"] for r in results], dim=0).detach().cpu()
 
     amb_2d = (all_targets == -1).long()
     amb_any = amb_2d.any(dim=-1).long()
