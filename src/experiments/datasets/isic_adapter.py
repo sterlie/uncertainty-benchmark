@@ -49,12 +49,25 @@ def _read_merged_table(cfg: DictConfig) -> pd.DataFrame:
     )
 
 
-def _make_loader(df: pd.DataFrame, cfg: DictConfig, shuffle: bool, train: bool = False) -> DataLoader:
+def _make_loader(
+    df: pd.DataFrame,
+    cfg: DictConfig,
+    shuffle: bool,
+    train: bool = False,
+    downsample_factor: int = 1,
+) -> DataLoader:
     image_size = int(cfg.dataset.get("image_size", 224))
     batch_size = int(cfg.dataset.batch_size)
     num_workers = int(cfg.dataset.get("num_workers", 0))
     images_dir = str(cfg.dataset.get("images_dir", os.path.join(str(cfg.dataset.get("data_root", cfg.data.root)), "images")))
-    transform = build_isic_train_transform(image_size) if train else build_isic_val_transform(image_size)
+    if train:
+        transform = build_isic_train_transform(image_size)
+    else:
+        transform = build_isic_val_transform(
+            image_size,
+            downsample_factor=downsample_factor,
+            upsample_mode=str(cfg.experiment.get("upsample_mode", "bilinear")),
+        )
 
     ds = SkinISICDataset(
         img_dir=images_dir,
@@ -158,7 +171,15 @@ def build_isic_loaders(cfg: DictConfig, distortion_pattern: str = "plain") -> Lo
     subgroup_patterns = {"age", "skin_tone", "hair", "drop", "ink"}
     pattern = str(distortion_pattern) if str(distortion_pattern) else "plain"
 
-    if pattern in subgroup_patterns or pattern == "pc1":
+    if pattern == "resolution":
+        # Same test images at decreasing effective resolution (avg-pool downsample, then upsample back
+        # to image_size). The first level should be factor 1 (original resolution = ID).
+        eval_loaders = {
+            str(level.name): _make_loader(test_df, cfg, shuffle=False, downsample_factor=int(level.factor))
+            for level in cfg.experiment.severity_levels
+        }
+        level_names = list(eval_loaders.keys())
+    elif pattern in subgroup_patterns or pattern == "pc1":
         if pattern == "pc1":
             subgroup_frames = build_isic_pc1_frames(cfg, train_df, val_df)
         else:

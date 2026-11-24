@@ -12,14 +12,46 @@ DEFAULT_ALL_CLASSES = ["AKIEC", "BCC", "BEN_OTH", "BKL", "DF", "INF", "MAL_OTH",
 DEFAULT_SELECTED_CLASSES = ["BCC", "SCCKA", "AKIEC", "NV", "BKL", "MEL"]
 
 
-def build_isic_val_transform(image_size: int = 224):
-    return transforms.Compose([
+class DownUpsample:
+    """Lower the effective resolution of a CHW tensor while keeping its pixel size.
+
+    The image is downsampled by average pooling over non-overlapping factor x factor blocks and
+    upsampled back to the original height/width (*upsample_mode*), so the model sees the same
+    number of pixels but less detail. factor <= 1 is a no-op.
+    """
+
+    def __init__(self, factor: int, upsample_mode: str = "bilinear"):
+        self.factor = int(factor)
+        self.upsample_mode = str(upsample_mode)
+
+    def __call__(self, img: torch.Tensor) -> torch.Tensor:
+        if self.factor <= 1:
+            return img
+        import torch.nn.functional as F
+
+        h, w = img.shape[-2:]
+        if h % self.factor or w % self.factor:
+            raise ValueError(f"Image size {h}x{w} is not divisible by downsample factor {self.factor}")
+        x = F.avg_pool2d(img.unsqueeze(0), kernel_size=self.factor)
+        align = False if self.upsample_mode in ("bilinear", "bicubic") else None
+        x = F.interpolate(x, size=(h, w), mode=self.upsample_mode, align_corners=align)
+        return x.squeeze(0).clamp(0.0, 1.0)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(factor={self.factor}, upsample_mode={self.upsample_mode})"
+
+
+def build_isic_val_transform(image_size: int = 224, downsample_factor: int = 1, upsample_mode: str = "bilinear"):
+    tfms = [
         transforms.ToPILImage(),
         transforms.Resize(256),
         transforms.CenterCrop(int(image_size)),
         transforms.ToTensor(),
-        transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-    ])
+    ]
+    if int(downsample_factor) > 1:
+        tfms.append(DownUpsample(downsample_factor, upsample_mode=upsample_mode))
+    tfms.append(transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
+    return transforms.Compose(tfms)
 
 
 def build_isic_train_transform(image_size: int = 224):
