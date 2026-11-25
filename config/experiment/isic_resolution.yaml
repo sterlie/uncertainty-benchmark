@@ -1,0 +1,24 @@
+name: isic_resolution
+epochs: 100
+lr: 0.001
+weight_decay: 0.0
+normalize: true
+distortion_pattern: resolution
+# Evaluate the saved ISIC models (models/isic/<method>/) on the standard split; never train
+load_pretrained_only: true
+
+# Test images are downsampled by `factor` with average pooling (factor x factor blocks) and
+# upsampled back to dataset.image_size (224px), so every level has the same number of pixels
+# but lower effective resolution. Factors must divide 224. The first level is the ID reference.
+upsample_mode: bilinear    # bilinear (smooth) or nearest (blocky pixelation)
+severity_levels:
+  - name: res_224
+    factor: 1
+  - name: res_112
+    factor: 2
+  - name: res_56
+    factor: 4
+  - name: res_28
+    factor: 8
+  - name: res_14
+    factor: 16
